@@ -121,6 +121,16 @@ a {{ color: var(--accent); }}
 #</style>
 #""", unsafe_allow_html=True)
 
+# ---- Plotly font stack (safe getter) ----
+FONT_STACK_DEFAULT = "Noto Sans KR, NanumGothic, Malgun Gothic, AppleGothic, Arial Unicode MS, Arial, sans-serif"
+
+def _plotly_font_family():
+    # 세션/글로벌/디폴트 순으로 가져옴
+    return (
+        st.session_state.get("plotly_font_family")
+        or globals().get("GLOBAL_FONT_FAMILY")
+        or FONT_STACK_DEFAULT
+    )
 
 
 
@@ -647,12 +657,12 @@ def style_fig(fig, title=None, height=None, legend="top", top_margin=96,
         template=ui["plotly_template"],
         paper_bgcolor=bg_rgba,
         plot_bgcolor=bg_rgba,
-        font=dict(family=GLOBAL_FONT_FAMILY, color=ui["text"], size=16),  # ★ 여기
+        font=dict(family=_plotly_font_family(), color=ui["text"], size=16),
         height=height,
         margin=m,
         legend=legend_cfg if legend != "none" else None,
         hovermode="x unified",
-        hoverlabel=dict(font=dict(size=13, family=GLOBAL_FONT_FAMILY),    # ★ 여기
+        hoverlabel=dict(font=dict(size=13, family=_plotly_font_family()),    # ★ 여기
                         bgcolor="rgba(255,255,255,0.92)", bordercolor="rgba(0,0,0,0.1)"),
         modebar=dict(bgcolor="rgba(0,0,0,0)", color="#808B98", activecolor=ui["accent"]),
     )
@@ -1583,6 +1593,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
