@@ -115,11 +115,11 @@ a {{ color: var(--accent); }}
 """, unsafe_allow_html=True)
 
 # ---- Force Korean-capable fonts in the browser (Plotly/HTML) ----
-st.markdown(f"""
-<style>
-* {{ font-family: {GLOBAL_FONT_FAMILY} !important; }}
-</style>
-""", unsafe_allow_html=True)
+#st.markdown(f"""
+#<style>
+#* {{ font-family: {GLOBAL_FONT_FAMILY} !important; }}
+#</style>
+#""", unsafe_allow_html=True)
 
 
 
@@ -1583,6 +1583,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
