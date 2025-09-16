@@ -288,7 +288,7 @@ def _font_path_safe():
 
 
 # ========================= 국가 브리프(요약) 입력 =========================
-st.sidebar.header("국가 브리프(요약) 입력")
+st.sidebar.header("국가 브리프(요약)")
 
 @st.cache_data(show_spinner=False)
 def load_country_briefs_from_ipynb_bytes(b: bytes) -> dict:
@@ -352,7 +352,7 @@ elif brief_mode == "파일 업로드":
 
 
 # ========================= WB Class 브리프(요약) 입력 =========================
-st.sidebar.header("WB Class 브리프(요약) 입력")
+st.sidebar.header("WB Class 브리프(요약)")
 
 @st.cache_data(show_spinner=False)
 def load_wb_briefs_from_ipynb_bytes(b: bytes) -> dict:
@@ -1608,6 +1608,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
