@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from PIL import Image
+from PIL import ImageFont
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
@@ -30,28 +31,27 @@ from matplotlib import font_manager, rcParams
 st.set_page_config(page_title="KSP Explorer (Pro v4)", layout="wide", page_icon="🌍")
 
 
-from pathlib import Path
-import os, urllib.request, streamlit as st
 
-def _font_path_safe():
-    # 0) 사용자가 업로드한 폰트(세션)
+import streamlit as st
+
+def wc_font_path():
+    # 0) sidebar 업로드(있으면 최우선)
     fp = st.session_state.get("wc_font_path")
     if fp and os.path.exists(fp):
         return fp
 
-    # 1) 레포(코드)와 함께 배포된 폰트 (GitHub/Streamlit Cloud 권장)
+    # 1) 레포/캐시 동봉
     here = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
-    repo_candidates = [
+    for p in [
         here / "assets" / "fonts" / "NanumGothic.ttf",
         here / "assets" / "fonts" / "NotoSansKR-Regular.otf",
         Path(".ksp_cache/fonts/NanumGothic.ttf"),
         Path(".ksp_cache/fonts/NotoSansKR-Regular.otf"),
-    ]
-    for p in repo_candidates:
-        if p.exists():
+    ]:
+        if p.exists(): 
             return str(p)
 
-    # 2) 로컬 개발용 시스템 폰트
+    # 2) OS 기본
     for p in [
         r"C:\Windows\Fonts\malgun.ttf",
         r"C:\Windows\Fonts\NanumGothic.ttf",
@@ -60,23 +60,25 @@ def _font_path_safe():
     ]:
         if os.path.exists(p):
             return p
+    return None
 
-    # 3) 최후 수단: 다운로드(인터넷 허용 환경에서만)
+def wc_font_assert_or_message():
+    """폰트를 실제로 TrueType로 열 수 있는지 검사. 실패 시 Streamlit에 빨간 에러 띄우고 False."""
+    fp = wc_font_path()
+    if not fp:
+        st.error("워드클라우드 한글 폰트를 찾지 못했습니다. 사이드바에서 .ttf/.otf 업로드하거나 `assets/fonts/NanumGothic.ttf`를 추가하세요.")
+        return None
     try:
-        cache_dir = Path(".ksp_cache/fonts"); cache_dir.mkdir(parents=True, exist_ok=True)
-        tgt = cache_dir / "NotoSansKR-Regular.otf"
-        if not tgt.exists():
-            urllib.request.urlretrieve(
-                "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Korean/NotoSansKR-Regular.otf", tgt
-            )
-        return str(tgt.resolve())
-    except Exception:
-        # 네트워크 차단 등으로 실패하면 None 반환 → 워드클라우드 섹션에서 안내만 띄우기
+        # 실제 FreeType로 열고 한글 글리프가 있는지 간단히 검사
+        ImageFont.truetype(fp, 24).getmask("가", mode="L")
+        return fp
+    except Exception as e:
+        st.error(f"워드클라우드 폰트를 열 수 없습니다: {fp}\n에러: {e}\n다른 .ttf 폰트(예: NanumGothic.ttf)를 사용해 보세요.")
         return None
 
 
-GLOBAL_FONT_PATH = _font_path_safe()  # 없으면 None일 수 있음
-GLOBAL_FONT_FAMILY = "Noto Sans KR, NanumGothic, Malgun Gothic, AppleGothic, Arial Unicode MS, sans-serif"
+#GLOBAL_FONT_PATH = _font_path_safe()  # 없으면 None일 수 있음
+#GLOBAL_FONT_FAMILY = "Noto Sans KR, NanumGothic, Malgun Gothic, AppleGothic, Arial Unicode MS, sans-serif"
 
 st.sidebar.header("환경 설정")
 theme_name = st.sidebar.selectbox(
@@ -701,24 +703,23 @@ VIZ_BG = {
     "bar_topk":      "#FAF7F2",   # Top-20 가로막대
 }
 
-fp = _font_path_safe()
 def render_wordcloud_with_bg(freqs: dict, bg_color: str, alpha: float=0.5,
                              width: int=820, height: int=460, scale: int=2):
+    fp = wc_font_assert_or_message()
+    if not fp:
+        return None
     wc = WordCloud(
         width=width, height=height, scale=scale,
         mode="RGBA", background_color=None,
         max_words=220, prefer_horizontal=0.95,
         max_font_size=108, min_font_size=10,
-        font_path=fp,   # ★ 여기!
+        font_path=fp,               # ★ 유일한 진입점
         random_state=42
     ).generate_from_frequencies(freqs)
-
-
-    wc_img = wc.to_image().convert("RGBA")
+    img_wc = wc.to_image().convert("RGBA")
     r,g,b = _hex_to_rgb(bg_color)
-    base  = Image.new("RGBA", wc_img.size, (r, g, b, int(255*alpha)))  # ← 반투명 배경
-    mixed = Image.alpha_composite(base, wc_img)                        # ← 합성
-    return mixed
+    base  = Image.new("RGBA", img_wc.size, (r, g, b, int(255*alpha)))
+    return Image.alpha_composite(base, img_wc)
 
 def auto_expand_top_margin_for_wrapped_legend(fig, base_top=100, items_per_row=8, extra_per_row=28):
     """legend를 이후에 top/horizontal로 변경한 경우 상단여백을 자동 증분."""
@@ -845,15 +846,7 @@ if mode == "국가별 총계":
                         bg = "white" if ui.get("plotly_template", "plotly_white") == "plotly_white" else ui.get("card", "#0f1115")
                         # (왼쪽) 워드클라우드 생성
 
-                        wc = WordCloud(
-                            width=820, height=460, scale=2,
-                            mode="RGBA", background_color=None,
-                            max_words=120, prefer_horizontal=0.95,
-                            max_font_size=108, min_font_size=10,
-                            margin=2,
-                            font_path=fp,   # ★ 여기!
-                            random_state=42
-                        ).generate_from_frequencies(top_freqs)
+                        
 
                         
 
@@ -1590,6 +1583,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
