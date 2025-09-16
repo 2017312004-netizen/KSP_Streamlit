@@ -701,7 +701,7 @@ VIZ_BG = {
     "bar_topk":      "#FAF7F2",   # Top-20 가로막대
 }
 
-
+fp = _font_path_safe()
 def render_wordcloud_with_bg(freqs: dict, bg_color: str, alpha: float=0.5,
                              width: int=820, height: int=460, scale: int=2):
     wc = WordCloud(
@@ -709,7 +709,7 @@ def render_wordcloud_with_bg(freqs: dict, bg_color: str, alpha: float=0.5,
         mode="RGBA", background_color=None,
         max_words=220, prefer_horizontal=0.95,
         max_font_size=108, min_font_size=10,
-        font_path=_font_path_safe(),   # ★ 여기!
+        font_path=fp,   # ★ 여기!
         random_state=42
     ).generate_from_frequencies(freqs)
 
@@ -851,7 +851,7 @@ if mode == "국가별 총계":
                             max_words=120, prefer_horizontal=0.95,
                             max_font_size=108, min_font_size=10,
                             margin=2,
-                            font_path=_font_path_safe(),   # ★ 여기!
+                            font_path=fp,   # ★ 여기!
                             random_state=42
                         ).generate_from_frequencies(top_freqs)
 
@@ -1590,6 +1590,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
