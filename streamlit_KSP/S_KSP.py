@@ -30,76 +30,52 @@ from matplotlib import font_manager, rcParams
 st.set_page_config(page_title="KSP Explorer (Pro v4)", layout="wide", page_icon="🌍")
 
 
-@st.cache_resource
-def ensure_korean_font_path() -> str | None:
-    """한글 폰트 경로를 최대한 유연하게 탐색. 실패해도 예외를 던지지 않고 None 반환."""
-    # 0) 환경변수로 직접 지정 허용
-    env_path = os.environ.get("KSP_FONT_PATH")
-    if env_path and Path(env_path).exists():
-        return str(Path(env_path).resolve())
+from pathlib import Path
+import os, urllib.request, streamlit as st
 
-    # 1) 스크립트 폴더와 레포 루트(현재 CWD) 모두에서 탐색
-    roots = [
-        Path(__file__).resolve().parent,  # 스크립트가 있는 폴더 (예: streamlit_KSP/)
-        Path.cwd(),                       # 레포 루트(CWD)
-    ]
-    local_names = [
-        "assets/fonts/NotoSansKR-Regular.otf",
-        "assets/fonts/NotoSansKR-Regular.ttf",
-        "assets/fonts/NanumGothic.ttf",
-        "assets/fonts/NanumGothicCoding.ttf",
-        "assets/fonts/AppleGothic.ttf",
-    ]
-    for root in roots:
-        for name in local_names:
-            p = (root / name).resolve()
-            if p.exists():
-                return str(p)
+def _font_path_safe():
+    # 0) 사용자가 업로드한 폰트(세션)
+    fp = st.session_state.get("wc_font_path")
+    if fp and os.path.exists(fp):
+        return fp
 
-    # 2) OS 기본 경로 폭넓게 탐색(리눅스/맥/윈도우)
-    sys_candidates = [
-        # Linux (Ubuntu 등)
-        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto-cjk/NotoSansCJKkr-Regular.otf",
-        # macOS
-        "/System/Library/Fonts/AppleGothic.ttf",
-        "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
-        "/System/Library/Fonts/Supplemental/NotoSansCJKkr-Regular.otf",
-        # Windows
+    # 1) 레포(코드)와 함께 배포된 폰트 (GitHub/Streamlit Cloud 권장)
+    here = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
+    repo_candidates = [
+        here / "assets" / "fonts" / "NanumGothic.ttf",
+        here / "assets" / "fonts" / "NotoSansKR-Regular.otf",
+        Path(".ksp_cache/fonts/NanumGothic.ttf"),
+        Path(".ksp_cache/fonts/NotoSansKR-Regular.otf"),
+    ]
+    for p in repo_candidates:
+        if p.exists():
+            return str(p)
+
+    # 2) 로컬 개발용 시스템 폰트
+    for p in [
         r"C:\Windows\Fonts\malgun.ttf",
         r"C:\Windows\Fonts\NanumGothic.ttf",
-    ]
-    for p in sys_candidates:
-        if Path(p).exists():
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "/System/Library/Fonts/AppleGothic.ttf",
+    ]:
+        if os.path.exists(p):
             return p
 
-    # 3) 마지막 시도: 캐시에 내려받기(네트워크 불가 환경이면 건너뜀)
-    cache_dir = Path(".ksp_cache/fonts"); cache_dir.mkdir(parents=True, exist_ok=True)
-    tgt = cache_dir / "NotoSansKR-Regular.otf"
-    if not tgt.exists():
-        urls = [
-            # mirrors 순회 (일부 환경에서 raw.githubusercontent 도메인만 막히는 경우 있음)
-            "https://raw.githubusercontent.com/googlefonts/noto-cjk/main/Sans/OTF/Korean/NotoSansKR-Regular.otf",
-            "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Korean/NotoSansKR-Regular.otf",
-            "https://github.com/naver/nanumfont/blob/master/TTF/NanumGothic.ttf?raw=1",
-        ]
-        for url in urls:
-            try:
-                urllib.request.urlretrieve(url, tgt)
-                break
-            except Exception:
-                continue
-    if tgt.exists():
+    # 3) 최후 수단: 다운로드(인터넷 허용 환경에서만)
+    try:
+        cache_dir = Path(".ksp_cache/fonts"); cache_dir.mkdir(parents=True, exist_ok=True)
+        tgt = cache_dir / "NotoSansKR-Regular.otf"
+        if not tgt.exists():
+            urllib.request.urlretrieve(
+                "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Korean/NotoSansKR-Regular.otf", tgt
+            )
         return str(tgt.resolve())
+    except Exception:
+        # 네트워크 차단 등으로 실패하면 None 반환 → 워드클라우드 섹션에서 안내만 띄우기
+        return None
 
-    # 실패해도 크래시 내지 말고 None 반환 (워드클라우드에서 영어/숫자만이라도 렌더)
-    st.warning("한글 폰트를 찾거나 내려받지 못했습니다. assets/fonts 폴더에 NotoSansKR-Regular.otf 또는 NanumGothic.ttf를 넣어주세요.")
-    return None
 
-
-GLOBAL_FONT_PATH = ensure_korean_font_path()
+GLOBAL_FONT_PATH = _font_path_safe()  # 없으면 None일 수 있음
 GLOBAL_FONT_FAMILY = "Noto Sans KR, NanumGothic, Malgun Gothic, AppleGothic, Arial Unicode MS, sans-serif"
 
 st.sidebar.header("환경 설정")
@@ -1614,6 +1590,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
