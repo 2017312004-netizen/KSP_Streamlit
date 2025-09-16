@@ -36,25 +36,21 @@ st.set_page_config(page_title="KSP Explorer (Pro v4)", layout="wide", page_icon=
 
 
 
-def _require_korean_font() -> str | None:
-    # 1) 리포에 동봉한 폰트 최우선
-    for p in [
+@st.cache_resource
+def resolve_korean_font() -> str | None:
+    # 1) 리포에 동봉된 폰트 우선
+    candidates = [
         Path(__file__).parent / "assets/fonts/NanumGothic.ttf",
         Path(__file__).parent / "assets/fonts/NotoSansKR-Regular.otf",
-    ]:
-        if p.exists():
-            try:
-                ImageFont.truetype(str(p), 20)
-                return str(p)
-            except Exception:
-                pass
-
-    # 2) 시스템 기본(리눅스/윈/맥)
-    for p in [
         "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         r"C:\Windows\Fonts\malgun.ttf",
         "/System/Library/Fonts/AppleGothic.ttf",
-    ]:
+    ]
+    for p in candidates:
+        p = str(p)
         if os.path.exists(p):
             try:
                 ImageFont.truetype(p, 20)
@@ -62,11 +58,25 @@ def _require_korean_font() -> str | None:
             except Exception:
                 pass
 
-    return None  # 없으면 None (앱은 안 죽고, 워드클라우드만 안내)
+    # 2) 최후: 시스템 폰트 디렉토리 전체 스캔(캐시됨)
+    roots = ["/usr/share/fonts", "/Library/Fonts", "/System/Library/Fonts", r"C:\Windows\Fonts"]
+    keys  = ["nanum","noto","apple","malgun","gulim","batang","sourcehan","cjk"]
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for dirpath, _, filenames in os.walk(root):
+            for fn in filenames:
+                if fn.lower().endswith((".ttf",".otf",".ttc")) and any(k in fn.lower() for k in keys):
+                    cand = os.path.join(dirpath, fn)
+                    try:
+                        ImageFont.truetype(cand, 20)
+                        return cand
+                    except Exception:
+                        continue
+    return None
 
 
-
-WC_FONT_PATH = _require_korean_font()
+WC_FONT_PATH = resolve_korean_font()
 #GLOBAL_FONT_FAMILY = "Noto Sans KR, NanumGothic, Malgun Gothic, AppleGothic, Arial Unicode MS, sans-serif"
 
 st.sidebar.header("환경 설정")
@@ -704,15 +714,12 @@ VIZ_BG = {
 
 
 
-def render_wordcloud_with_bg(freqs: dict, bg_color: str, alpha: float=0.5,
-                           width: int=820, height: int=460, scale: int=2):
-    if not freqs:
+def render_wordcloud_png(freqs: dict, bg_color: str, alpha: float=0.5,
+                         width: int=820, height: int=460, scale: int=2) -> bytes | None:
+    """워드클라우드 이미지를 PNG 바이트로 반환 (st.image 안전 표시용)."""
+    if not freqs or not WC_FONT_PATH:
         return None
-    if not WC_FONT_PATH:
-        return None  # 폰트 없으면 이미지 생성 안 함
 
-    from wordcloud import WordCloud
-    from PIL import Image
     wc = WordCloud(
         width=width, height=height, scale=scale,
         mode="RGBA", background_color=None,
@@ -721,10 +728,15 @@ def render_wordcloud_with_bg(freqs: dict, bg_color: str, alpha: float=0.5,
         font_path=WC_FONT_PATH, random_state=42
     ).generate_from_frequencies(freqs)
 
-    wc_img = wc.to_image().convert("RGBA")
-    r,g,b = _hex_to_rgb(bg_color)
-    base  = Image.new("RGBA", wc_img.size, (r, g, b, int(255*alpha)))
-    return Image.alpha_composite(base, wc_img)
+    wc_img = wc.to_image().convert("RGBA")  # PIL.Image
+    r, g, b = _hex_to_rgb(bg_color)
+    base    = Image.new("RGBA", wc_img.size, (r, g, b, int(255*alpha)))
+    mixed   = Image.alpha_composite(base, wc_img)
+
+    buf = io.BytesIO()
+    mixed.save(buf, format="PNG")  # ★ 포맷 확정
+    return buf.getvalue()
+
 
 def auto_expand_top_margin_for_wrapped_legend(fig, base_top=100, items_per_row=8, extra_per_row=28):
     """legend를 이후에 top/horizontal로 변경한 경우 상단여백을 자동 증분."""
@@ -853,14 +865,16 @@ if mode == "국가별 총계":
 
                         
 
-                        
+                        png_bytes = render_wordcloud_png(top_freqs, bg_color=VIZ_BG["wc"], alpha=0.5)
+                        if png_bytes:
+                            st.image(png_bytes, use_container_width=True, output_format="PNG")  # ★ 안전
+                        else:
+                            if not WC_FONT_PATH:
+                                st.error("워드클라우드용 한글 폰트를 찾지 못했습니다. (리포에 assets/fonts/NanumGothic.ttf 추가 또는 packages.txt에 fonts-nanum)")
+                            else:
+                                st.info("표시할 단어가 부족합니다.")
 
-                        # 투명+반투명 배경 합성 시에도 동일 경로 사용
-                        img = render_wordcloud_with_bg(
-                            top_freqs, bg_color=VIZ_BG["wc"], alpha=0.5,
-                            width=820, height=460, scale=2
-                        )
-                        st.image(img, use_container_width=True, clamp=True)
+                        
 
                         # 상위 키워드 칩(빠른 스캔용, 12개)
                         chips = " ".join([f'<span class="ksp-chip">{k}</span>' for k, _ in freq.most_common(12)])
@@ -1007,9 +1021,14 @@ elif mode == "WB Class 단일클래스":
         with lc:
             st.markdown("**워드클라우드**")
             if top_freqs:
-                img = render_wordcloud_with_bg(top_freqs, bg_color=VIZ_BG["wc"], alpha=0.5,
-                                               width=820, height=460, scale=2)
-                st.image(img, use_container_width=True, clamp=True)
+                png_bytes = render_wordcloud_png(top_freqs, bg_color=VIZ_BG["wc"], alpha=0.5)
+                if png_bytes:
+                    st.image(png_bytes, use_container_width=True, output_format="PNG")  # ★ 안전
+                else:
+                    if not WC_FONT_PATH:
+                        st.error("워드클라우드용 한글 폰트를 찾지 못했습니다. (리포에 assets/fonts/NanumGothic.ttf 추가 또는 packages.txt에 fonts-nanum)")
+                    else:
+                        st.info("표시할 단어가 부족합니다.")
                 chips = " ".join([f'<span class="ksp-chip">{k}</span>' for k, _ in freq.most_common(12)])
                 st.markdown(chips, unsafe_allow_html=True)
             else:
@@ -1588,6 +1607,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
