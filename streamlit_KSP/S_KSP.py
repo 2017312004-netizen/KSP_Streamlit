@@ -31,38 +31,73 @@ st.set_page_config(page_title="KSP Explorer (Pro v4)", layout="wide", page_icon=
 
 
 @st.cache_resource
-def ensure_korean_font_path() -> str:
-    # 1) 프로젝트 동봉 폰트 우선
-    local_candidates = [
-        Path("assets/fonts/NotoSansKR-Regular.otf"),
-        Path("assets/fonts/NanumGothic.ttf"),
-    ]
-    for p in local_candidates:
-        if p.exists():
-            return str(p.resolve())
+def ensure_korean_font_path() -> str | None:
+    """한글 폰트 경로를 최대한 유연하게 탐색. 실패해도 예외를 던지지 않고 None 반환."""
+    # 0) 환경변수로 직접 지정 허용
+    env_path = os.environ.get("KSP_FONT_PATH")
+    if env_path and Path(env_path).exists():
+        return str(Path(env_path).resolve())
 
-    # 2) OS 기본 폰트
+    # 1) 스크립트 폴더와 레포 루트(현재 CWD) 모두에서 탐색
+    roots = [
+        Path(__file__).resolve().parent,  # 스크립트가 있는 폴더 (예: streamlit_KSP/)
+        Path.cwd(),                       # 레포 루트(CWD)
+    ]
+    local_names = [
+        "assets/fonts/NotoSansKR-Regular.otf",
+        "assets/fonts/NotoSansKR-Regular.ttf",
+        "assets/fonts/NanumGothic.ttf",
+        "assets/fonts/NanumGothicCoding.ttf",
+        "assets/fonts/AppleGothic.ttf",
+    ]
+    for root in roots:
+        for name in local_names:
+            p = (root / name).resolve()
+            if p.exists():
+                return str(p)
+
+    # 2) OS 기본 경로 폭넓게 탐색(리눅스/맥/윈도우)
     sys_candidates = [
-        r"C:\Windows\Fonts\malgun.ttf",                          # Windows
-        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",       # Ubuntu (fonts-nanum)
-        "/System/Library/Fonts/AppleGothic.ttf",                 # macOS
+        # Linux (Ubuntu 등)
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto-cjk/NotoSansCJKkr-Regular.otf",
+        # macOS
+        "/System/Library/Fonts/AppleGothic.ttf",
+        "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+        "/System/Library/Fonts/Supplemental/NotoSansCJKkr-Regular.otf",
+        # Windows
+        r"C:\Windows\Fonts\malgun.ttf",
+        r"C:\Windows\Fonts\NanumGothic.ttf",
     ]
     for p in sys_candidates:
         if Path(p).exists():
             return p
 
-    # 3) 마지막 수단: 구글 Noto Sans KR 다운로드 (캐시)
+    # 3) 마지막 시도: 캐시에 내려받기(네트워크 불가 환경이면 건너뜀)
     cache_dir = Path(".ksp_cache/fonts"); cache_dir.mkdir(parents=True, exist_ok=True)
     tgt = cache_dir / "NotoSansKR-Regular.otf"
     if not tgt.exists():
-        url = "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Korean/NotoSansKR-Regular.otf"
-        try:
-            urllib.request.urlretrieve(url, tgt)
-        except Exception:
-            raise RuntimeError(
-                "한글 폰트를 찾을 수 없습니다. ./assets/fonts/ 아래에 NotoSansKR-Regular.otf 또는 NanumGothic.ttf를 넣어주세요."
-            )
-    return str(tgt.resolve())
+        urls = [
+            # mirrors 순회 (일부 환경에서 raw.githubusercontent 도메인만 막히는 경우 있음)
+            "https://raw.githubusercontent.com/googlefonts/noto-cjk/main/Sans/OTF/Korean/NotoSansKR-Regular.otf",
+            "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Korean/NotoSansKR-Regular.otf",
+            "https://github.com/naver/nanumfont/blob/master/TTF/NanumGothic.ttf?raw=1",
+        ]
+        for url in urls:
+            try:
+                urllib.request.urlretrieve(url, tgt)
+                break
+            except Exception:
+                continue
+    if tgt.exists():
+        return str(tgt.resolve())
+
+    # 실패해도 크래시 내지 말고 None 반환 (워드클라우드에서 영어/숫자만이라도 렌더)
+    st.warning("한글 폰트를 찾거나 내려받지 못했습니다. assets/fonts 폴더에 NotoSansKR-Regular.otf 또는 NanumGothic.ttf를 넣어주세요.")
+    return None
+
 
 GLOBAL_FONT_PATH = ensure_korean_font_path()
 GLOBAL_FONT_FAMILY = "Noto Sans KR, NanumGothic, Malgun Gothic, AppleGothic, Arial Unicode MS, sans-serif"
@@ -1573,6 +1608,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
