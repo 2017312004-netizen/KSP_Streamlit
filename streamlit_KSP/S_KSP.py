@@ -903,7 +903,7 @@ if mode == "국가별 총계":
                         st.info("표시할 키워드가 부족합니다.")
 
             with tab_table:
-                st.markdown("#### 보고서 목록")
+                st.markdown("#### 프로젝트 목록")
                 cols_show = ["파일명","지원기관","사업 기간","주제분류(대)", "WB Class","주요 내용","기대 효과","Hashtag_str"]
                 st.dataframe(sub[cols_show].drop_duplicates().reset_index(drop=True), use_container_width=True)
     else:
@@ -1608,6 +1608,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
