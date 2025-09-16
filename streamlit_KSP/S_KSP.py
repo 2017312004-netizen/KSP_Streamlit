@@ -294,6 +294,8 @@ with st.expander("데이터 미리보기 / 진단", expanded=False):
 # --------------------- 데이터 입력 (끝) ---------------------
 
 
+def _font_path_safe():
+    return GLOBAL_FONT_PATH or find_korean_font()  # 둘 다 없으면 None
 
 
 
@@ -731,9 +733,10 @@ def render_wordcloud_with_bg(freqs: dict, bg_color: str, alpha: float=0.5,
         mode="RGBA", background_color=None,
         max_words=220, prefer_horizontal=0.95,
         max_font_size=108, min_font_size=10,
-        font_path=GLOBAL_FONT_PATH,   # ★
+        font_path=_font_path_safe(),   # ★ 여기!
         random_state=42
     ).generate_from_frequencies(freqs)
+
 
     wc_img = wc.to_image().convert("RGBA")
     r,g,b = _hex_to_rgb(bg_color)
@@ -865,15 +868,18 @@ if mode == "국가별 총계":
                         # 밝은/어두운 테마 자동 배경
                         bg = "white" if ui.get("plotly_template", "plotly_white") == "plotly_white" else ui.get("card", "#0f1115")
                         # (왼쪽) 워드클라우드 생성
+
                         wc = WordCloud(
                             width=820, height=460, scale=2,
                             mode="RGBA", background_color=None,
                             max_words=120, prefer_horizontal=0.95,
                             max_font_size=108, min_font_size=10,
                             margin=2,
-                            font_path=GLOBAL_FONT_PATH,     # ★ 필수
+                            font_path=_font_path_safe(),   # ★ 여기!
                             random_state=42
                         ).generate_from_frequencies(top_freqs)
+
+                        
 
                         # 투명+반투명 배경 합성 시에도 동일 경로 사용
                         img = render_wordcloud_with_bg(
@@ -1608,6 +1614,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
