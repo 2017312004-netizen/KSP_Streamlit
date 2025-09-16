@@ -32,52 +32,41 @@ st.set_page_config(page_title="KSP Explorer (Pro v4)", layout="wide", page_icon=
 
 
 
-import streamlit as st
 
-def wc_font_path():
-    # 0) sidebar 업로드(있으면 최우선)
-    fp = st.session_state.get("wc_font_path")
-    if fp and os.path.exists(fp):
-        return fp
 
-    # 1) 레포/캐시 동봉
-    here = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
+
+
+def _require_korean_font() -> str | None:
+    # 1) 리포에 동봉한 폰트 최우선
     for p in [
-        here / "assets" / "fonts" / "NanumGothic.ttf",
-        here / "assets" / "fonts" / "NotoSansKR-Regular.otf",
-        Path(".ksp_cache/fonts/NanumGothic.ttf"),
-        Path(".ksp_cache/fonts/NotoSansKR-Regular.otf"),
+        Path(__file__).parent / "assets/fonts/NanumGothic.ttf",
+        Path(__file__).parent / "assets/fonts/NotoSansKR-Regular.otf",
     ]:
-        if p.exists(): 
-            return str(p)
+        if p.exists():
+            try:
+                ImageFont.truetype(str(p), 20)
+                return str(p)
+            except Exception:
+                pass
 
-    # 2) OS 기본
+    # 2) 시스템 기본(리눅스/윈/맥)
     for p in [
-        r"C:\Windows\Fonts\malgun.ttf",
-        r"C:\Windows\Fonts\NanumGothic.ttf",
         "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        r"C:\Windows\Fonts\malgun.ttf",
         "/System/Library/Fonts/AppleGothic.ttf",
     ]:
         if os.path.exists(p):
-            return p
-    return None
+            try:
+                ImageFont.truetype(p, 20)
+                return p
+            except Exception:
+                pass
 
-def wc_font_assert_or_message():
-    """폰트를 실제로 TrueType로 열 수 있는지 검사. 실패 시 Streamlit에 빨간 에러 띄우고 False."""
-    fp = wc_font_path()
-    if not fp:
-        st.error("워드클라우드 한글 폰트를 찾지 못했습니다. 사이드바에서 .ttf/.otf 업로드하거나 `assets/fonts/NanumGothic.ttf`를 추가하세요.")
-        return None
-    try:
-        # 실제 FreeType로 열고 한글 글리프가 있는지 간단히 검사
-        ImageFont.truetype(fp, 24).getmask("가", mode="L")
-        return fp
-    except Exception as e:
-        st.error(f"워드클라우드 폰트를 열 수 없습니다: {fp}\n에러: {e}\n다른 .ttf 폰트(예: NanumGothic.ttf)를 사용해 보세요.")
-        return None
+    return None  # 없으면 None (앱은 안 죽고, 워드클라우드만 안내)
 
 
-#GLOBAL_FONT_PATH = _font_path_safe()  # 없으면 None일 수 있음
+
+WC_FONT_PATH = _require_korean_font()
 #GLOBAL_FONT_FAMILY = "Noto Sans KR, NanumGothic, Malgun Gothic, AppleGothic, Arial Unicode MS, sans-serif"
 
 st.sidebar.header("환경 설정")
@@ -713,23 +702,29 @@ VIZ_BG = {
     "bar_topk":      "#FAF7F2",   # Top-20 가로막대
 }
 
+
+
 def render_wordcloud_with_bg(freqs: dict, bg_color: str, alpha: float=0.5,
-                             width: int=820, height: int=460, scale: int=2):
-    fp = wc_font_assert_or_message()
-    if not fp:
+                           width: int=820, height: int=460, scale: int=2):
+    if not freqs:
         return None
+    if not WC_FONT_PATH:
+        return None  # 폰트 없으면 이미지 생성 안 함
+
+    from wordcloud import WordCloud
+    from PIL import Image
     wc = WordCloud(
         width=width, height=height, scale=scale,
         mode="RGBA", background_color=None,
         max_words=220, prefer_horizontal=0.95,
         max_font_size=108, min_font_size=10,
-        font_path=fp,               # ★ 유일한 진입점
-        random_state=42
+        font_path=WC_FONT_PATH, random_state=42
     ).generate_from_frequencies(freqs)
-    img_wc = wc.to_image().convert("RGBA")
+
+    wc_img = wc.to_image().convert("RGBA")
     r,g,b = _hex_to_rgb(bg_color)
-    base  = Image.new("RGBA", img_wc.size, (r, g, b, int(255*alpha)))
-    return Image.alpha_composite(base, img_wc)
+    base  = Image.new("RGBA", wc_img.size, (r, g, b, int(255*alpha)))
+    return Image.alpha_composite(base, wc_img)
 
 def auto_expand_top_margin_for_wrapped_legend(fig, base_top=100, items_per_row=8, extra_per_row=28):
     """legend를 이후에 top/horizontal로 변경한 경우 상단여백을 자동 증분."""
@@ -1593,6 +1588,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
