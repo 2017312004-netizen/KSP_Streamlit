@@ -850,7 +850,7 @@ if mode == "국가별 총계":
                 ]
                 freq = Counter(tokens)
                 top_freqs = dict(freq.most_common(220))
-                top20 = freq.most_common(20)
+                top20 = freq.most_common(10)
 
                 # 2) 2열 배치 (워드클라우드 : 막대 = 6 : 7)
                 lc, rc = st.columns([6, 7], gap="large")
@@ -1608,6 +1608,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
