@@ -1161,7 +1161,7 @@ BASE_STOP = {
     "전자세금계산서","법적","의무화","예산","가뭄","교육","개인정보보호","vat","건설","vision","세정","다층","민간","근거",
     "산업","세수","세무조직","재정","인사","재무부","투자","통합","훈련","홍보","조정","무역","홍수","클라우드","데이터센터",
     "전자정부","추정","소스","콘텐츠", "조세", "의료", "교통", "ip", "Ip", "인증", "페기물", "납세자", "의약품", "생산성",
-    "전자", "감사", "공무원의", "등록", "집행", "사이버", "조세행정", "높여", "원격", "사용자", "콜센터", "기관별", "에너지",
+    "전자", "감사", "공무원의", "등록", "집행", "사이버", "조세행정", "높여", "원격", "사용자", "콜센터", "기관별", "에너지", "전자조달",
     # 축/라벨 관련 불용어 추가
     "연도","년도","year","years",
     # 영문 상투어
@@ -1175,8 +1175,8 @@ BASE_STOP_LOW = {s.lower() for s in BASE_STOP}
  
 
 # ---- 고정 파라미터 (슬라이더 제거)
-TOP_K_PER_FIG = 15   # 상승/하락 각각 표기 키워드 수
-ROLL = 10             # Jeffreys + 롤링 윈도(년)
+TOP_K_PER_FIG = 20   # 상승/하락 각각 표기 키워드 수
+ROLL = 5             # Jeffreys + 롤링 윈도(년)
 ALPHA = 0.5
 WINDOW_YEARS = 10
 RECENT_YEARS = 5
@@ -1617,6 +1617,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
