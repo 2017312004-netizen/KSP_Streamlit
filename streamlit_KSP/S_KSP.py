@@ -1176,9 +1176,9 @@ BASE_STOP_LOW = {s.lower() for s in BASE_STOP}
 
 # ---- 고정 파라미터 (슬라이더 제거)
 TOP_K_PER_FIG = 25   # 상승/하락 각각 표기 키워드 수
-ROLL = 3             # Jeffreys + 롤링 윈도(년)
+ROLL = 5             # Jeffreys + 롤링 윈도(년)
 ALPHA = 0.7
-WINDOW_YEARS = 3
+WINDOW_YEARS = 10
 RECENT_YEARS = 5
 MIN_DOCS_BASE, MIN_YEARS_BASE = 4, 3
 RECENT_DOCS_MIN, RECENT_YEARS_MIN = 2, 2
@@ -1617,6 +1617,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
