@@ -1147,7 +1147,7 @@ with c2: st.plotly_chart(fig5, use_container_width=True)
 # 추가 시각화 ①: 대표 키워드 상대 트렌드(상승세/하락세)  — Plotly
 # =====================================================================
 st.markdown("---")
-st.subheader("대표 키워드 상대 트렌드 (상승/하락)")
+st.subheader("AI 추출 키워드 상대 트렌드 (상승/하락)")
 
 # '대표 키워드 상대 트렌드'에 추가 적용할 불용어
 BASE_STOP = { 
@@ -1501,7 +1501,7 @@ else:
 # 추가 시각화 ②: 대표 '주제(키워드)' 상대 트렌드(상승/하락) — Plotly
 # =====================================================================
 st.markdown("---")
-st.subheader("대표 '주제(키워드)' 상대 트렌드 (상승/하락)")
+st.subheader("인간 선정 키워드 상대 트렌드 (상승/하락)")
 
 THEMES = OrderedDict([
     (r"(전자\s*조달|e[\s\-]*procure(?:ment)?|e[\s\-]*gp\b|joneps|koneps|prozorro)", "전자조달·e-Procurement"),
@@ -1615,6 +1615,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
