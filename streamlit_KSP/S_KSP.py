@@ -1160,7 +1160,7 @@ BASE_STOP = {
     "전자세금계산서","법적","의무화","예산","가뭄","교육","개인정보보호","vat","건설","vision","세정","다층","민간","근거",
     "산업","세수","세무조직","재정","인사","재무부","투자","통합","훈련","홍보","조정","무역","홍수","클라우드","데이터센터",
     "전자정부","추정","소스","콘텐츠", "조세", "의료", "교통", "ip", "Ip", "인증", "페기물", "납세자", "의약품", "생산성",
-    "전자", "감사", "공무원의", "등록",
+    "전자", "감사", "공무원의", "등록", "집행", "사이버", "조세행정",
     # 축/라벨 관련 불용어 추가
     "연도","년도","year","years",
     # 영문 상투어
@@ -1177,7 +1177,7 @@ BASE_STOP_LOW = {s.lower() for s in BASE_STOP}
 TOP_K_PER_FIG = 10   # 상승/하락 각각 표기 키워드 수
 ROLL = 5             # Jeffreys + 롤링 윈도(년)
 ALPHA = 0.5
-WINDOW_YEARS = 10
+WINDOW_YEARS = 5
 RECENT_YEARS = 5
 MIN_DOCS_BASE, MIN_YEARS_BASE = 4, 3
 RECENT_DOCS_MIN, RECENT_YEARS_MIN = 2, 2
@@ -1616,6 +1616,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
