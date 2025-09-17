@@ -439,6 +439,13 @@ COUNTRY_MAP = {
     "탄자니아": ("TZA","Tanzania","탄자니아"), "방글라데시": ("BGD","Bangladesh","방글라데시"), "헝가리": ("HUN","Hungary","헝가리"),
     "페루": ("PER","Peru","페루"), "필리핀": ("PHL","Philippines","필리핀"),
     "우크라이나": ("UKR","Ukraine","우크라이나"), "칠레": ("CHL","Chile","칠레"),
+    "콜롬비아":  ("COL", "Colombia", "콜롬비아"),
+    "코스타리카": ("CRI", "Costa Rica", "코스타리카"),
+    "카타르":    ("QAT", "Qatar", "카타르"),
+    "타지키스탄": ("TJK", "Tajikistan", "타지키스탄"),
+    "우루과이":  ("URY", "Uruguay", "우루과이"),
+    "브라질":    ("BRA", "Brazil", "브라질"),
+    "불가리아":  ("BGR", "Bulgaria", "불가리아"),
 }
 REGION_RULES = {
     "메콩강위원회": [("KHM","Cambodia","캄보디아"), ("LAO","Laos","라오스"), ("THA","Thailand","태국"), ("VNM","Vietnam","베트남")],
@@ -1608,6 +1615,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
