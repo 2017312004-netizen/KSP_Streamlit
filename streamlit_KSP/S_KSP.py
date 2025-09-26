@@ -1131,9 +1131,14 @@ def draw_year_chart(g, group_col, title_prefix):
         fig.update_yaxes(autorange="reversed", dtick=1, title="순위(1=최상)")
         return style_fig(fig, f"{title_prefix} — 순위 Bump", legend="top", top_margin=120)
     else:  # 100% 누적 막대
-        fig = px.bar(g, x="연도", y="pct", color=group_col, barmode="stack", labels={"pct":"비중"})
-        fig.update_yaxes(range=[0,1], tickformat=".0%")
-        return style_fig(fig, f"{title_prefix} — 100% 누적 막대", legend="top", top_margin=120)
+        # fig = px.bar(g, x="연도", y="pct", color=group_col, barmode="stack", labels={"pct":"비중"})
+        # fig.update_yaxes(range=[0,1], tickformat=".0%")
+        # return style_fig(fig, f"{title_prefix} — 100% 누적 막대", legend="top", top_margin=120)
+        
+        fig = px.line(g, x="연도", y="pct", color=group_col, labels={"pct": "비중"}, markers=True)  # 각 점을 동그라미로 표시
+        fig.update_yaxes(range=[0, 1], tickformat=".0%")
+        fig.update_layout(title="비율 추세 (라인 플롯)", legend=dict(orientation="h", y=1.1))
+        return style_fig(fig, f"{title_prefix} — 순위 Bump", legend="top", top_margin=120)
 
 if not dfy_valid.empty:
     g_subj = time_share(dfy_valid, "주제분류(대)")
@@ -1507,7 +1512,7 @@ else:
 # 추가 시각화 ②: 대표 '주제(키워드)' 상대 트렌드(상승/하락) — Plotly
 # =====================================================================
 st.markdown("---")
-st.subheader("인간 선정 키워드 상대 트렌드 (상승/하락)")
+st.subheader("분석 기반 키워드 상대 트렌드 (상승/하락)")
 
 THEMES = OrderedDict([
     (r"(전자\s*조달|e[\s\-]*procure(?:ment)?|e[\s\-]*gp\b|joneps|koneps|prozorro)", "전자조달·e-Procurement"),
