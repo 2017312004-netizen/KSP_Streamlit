@@ -26,15 +26,15 @@ import plotly.express as px
 import plotly.graph_objects as go
 from matplotlib import font_manager, rcParams
 
+#######################################################
+# --------------------- Changyeon ---------------------
+#######################################################
+import pdfplumber
+import zipfile
+import streamlit.components.v1 as components
 
 # --------------------- 페이지/테마 ---------------------
 st.set_page_config(page_title="KSP Explorer (Pro v4)", layout="wide", page_icon="🌍")
-
-
-
-
-
-
 
 @st.cache_resource
 def resolve_korean_font() -> str | None:
@@ -156,6 +156,117 @@ STOP = {
     "경제에서", "경제로", "전환하고자", "그러나" ,"부문은", "부족으로", "잠재력을", "충분히", "활용하지", "못하고", "호주는", "호주의", "분야에서", "인도네시아는", "문제점을", "효율성을"
 }
 STOP_LOW = {w.lower() for w in STOP}
+#######################################################
+# --------------------- Changyeon ---------------------
+#######################################################
+st.sidebar.header("1. LLM 입력용 ZIP 폴더 생성")
+
+def extract_smooth_text_from_pdf(pdf_path: str) -> str:
+    full_text = ""
+    with pdfplumber.open(pdf_path) as pdf:
+        for i, page in enumerate(pdf.pages):
+            page_text = page.extract_text() or ""
+            page_text = page_text.strip()
+            if not page_text:
+                continue
+
+            if re.search(r'[.?!\'"]$', page_text.strip()):
+                full_text += page_text + "\n"
+            else:
+                full_text += page_text + " "
+    return full_text.strip()
+
+# 사이드바에서 PDF 폴더 경로 입력 받기
+base_dir = st.sidebar.text_input("📂 PDF 폴더 경로 입력")
+
+if base_dir and os.path.isdir(base_dir):
+    st.success(f"선택된 폴더: {base_dir}")
+
+    if st.sidebar.button("텍스트 추출 및 ZIP 생성"):
+        results = []
+        txt_files = []
+
+        # 임시 zip 메모리 버퍼
+        zip_buffer = io.BytesIO()
+
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for filename in os.listdir(base_dir):
+                if not filename.lower().endswith(".pdf"):
+                    continue
+
+                pdf_path = os.path.join(base_dir, filename)
+                txt_filename = os.path.splitext(filename)[0] + ".txt"
+
+                try:
+                    text = extract_smooth_text_from_pdf(pdf_path)
+                    if len(text) < 100:
+                        st.warning(f"⚠️ 텍스트 부족 → 건너뜀: {filename}")
+                        continue
+
+                    # zip 안에 직접 기록
+                    zipf.writestr(txt_filename, text)
+                    txt_files.append(txt_filename)
+                    results.append(f"✓ 저장 완료: {filename}")
+                except Exception as e:
+                    results.append(f"⚠️ 오류 발생: {filename} → {e}")
+
+        # ZIP 다운로드 버튼
+        zip_buffer.seek(0)
+        st.write("### 처리 결과")
+        st.text("\n".join(results))
+
+        if txt_files:
+            st.download_button(
+                label="📥 변환된 TXT ZIP 다운로드",
+                data=zip_buffer,
+                file_name="PDF2TXT_Result.zip",
+                mime="application/zip"
+            )
+else:
+    st.info("👈 사이드바에서 폴더 경로를 입력하세요.")
+
+st.sidebar.header("2. LLM 입력용 프롬프트 복사")
+text = """
+네 역할은 Tabulation machine이야.
+zip 폴더의 압축을 해제한 뒤 정보를 추출해서 table을 만들 거야.
+table의 열은 ['파일명', '대상국', '대상기관', '주요 분야', '사업 기간, '지원기관', '주요 내용', '기대 효과', '요약', 'WB_Class']로 구성해.
+파일명은 zip 폴더 내 확장자 및 영문, 국문 표기를 제외한 파일명을 입력해.
+대상국, 대상기관, 주요 분야, 지원기관은 파일 내용으로부터 추출해. 이들은 한국어 label 형태로 입력해.
+사업 기간은 연도와 대시를 사용해서 나타내.
+주요 내용, 기대 효과, 요약은 각각 5문장 이상, 10문장 이하의 문장으로 입력해.
+주요 내용은 현황과 이슈, 문제점, 제안 및 제언을 위주로 작성해.
+기대효과는 정성적 및 정량적 성과, 전망, 기대효과 중심으로 작성해.
+요약은 네 판단 하에 다룰 만한 부분을 종합적으로 작성해.
+WB Class는 https://data360.worldbank.org/en/digital의 Topic을 label로 사용할 거야.
+'Connectivity', 'Data Infrastructure', 'Cybersecurity', 'Digital Industry and Jobs', 'Digital Services' 중에 선택해.
+보고서 성격에 따라 아래 사전을 참고하여 label을 할당해.
+{Connectivity: [Telecom Networks, Telecom Subscriptions, Digital Adoption, Telecom Markets and Competition, Affordability, Telecom Regulation],
+Data Infrastructure: [Data Centers, Internet Exchange Points (IXPs)],
+Cybersecurity: [ITU Global Cybersecurity Index (GCI)],
+Digital Industry and Jobs: [ICT Industry , Digital Skills],
+Digital Services: [Digital Public Infrastructure - DPI, E-Government]}
+"""
+
+# 복사 버튼 (JS 활용)
+copy_button = """
+    <button onclick="navigator.clipboard.writeText('%s')">
+        📋 LLM 입력용 프롬프트 복사
+    </button>
+""" % text.replace("'", "\\'")
+
+components.html(copy_button, height=40)
+
+st.sidebar.header("3. LLM 사용 위해 이동")
+st.sidebar.markdown("👉 **이동하여 ZIP 폴더와 프롬프트를 입력하세요.**")
+url = "https://chatgpt.com/c"  # 원하는 링크
+
+link_button = f"""
+    <a href="{url}" target="_blank">
+        <button>🔗 LLM용 프롬프트 페이지 이동</button>
+    </a>
+"""
+
+components.html(link_button, height=40)
 
 # --------------------- 데이터 입력 ---------------------
 st.sidebar.header("데이터 입력")
@@ -1138,7 +1249,7 @@ def draw_year_chart(g, group_col, title_prefix):
         fig = px.line(g, x="연도", y="pct", color=group_col, labels={"pct": "비중"}, markers=True)  # 각 점을 동그라미로 표시
         fig.update_yaxes(range=[0, 1], tickformat=".0%")
         fig.update_layout(title="비율 추세 (라인 플롯)", legend=dict(orientation="h", y=1.1))
-        return style_fig(fig, f"{title_prefix} — 순위 Bump", legend="top", top_margin=120)
+        return style_fig(fig, f"{title_prefix} — 비중 Bump", legend="top", top_margin=120)
 
 if not dfy_valid.empty:
     g_subj = time_share(dfy_valid, "주제분류(대)")
