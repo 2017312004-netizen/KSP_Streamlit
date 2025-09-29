@@ -32,6 +32,8 @@ from matplotlib import font_manager, rcParams
 import pdfplumber
 import zipfile
 import streamlit.components.v1 as components
+import json
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 # --------------------- 페이지/테마 ---------------------
 st.set_page_config(page_title="KSP Explorer (Pro v4)", layout="wide", page_icon="🌍")
@@ -246,27 +248,116 @@ Cybersecurity: [ITU Global Cybersecurity Index (GCI)],
 Digital Industry and Jobs: [ICT Industry , Digital Skills],
 Digital Services: [Digital Public Infrastructure - DPI, E-Government]}
 """
+st.sidebar.code(text, language="text")
 
-# 복사 버튼 (JS 활용)
-copy_button = """
-    <button onclick="navigator.clipboard.writeText('%s')">
-        📋 LLM 입력용 프롬프트 복사
-    </button>
-""" % text.replace("'", "\\'")
+st.sidebar.header("3. Hashtag 추출 및 문장 결합")
+def make_tags(row):  # 1
+    tags = []
+    text = f"{row['파일명']} {row['대상기관']} {row['지원기관']}"
+    
+    if 'KDI' in text:
+        tags += ['경제', '사회정책']
+    if '한국수출입은행' in text:
+        tags += ['건설', '인프라']
+    if 'KOTRA' in text:
+        tags += ['산업', '무역', '투자']
+        
+    return list(dict.fromkeys(tags))
 
-components.html(copy_button, height=40)
+def del_word(row, column, word):  # 2
+    text = f"{row[column]}"
+    if pd.isna(text):
+        return None
+    
+    parts = [p.strip() for p in str(text).split(',')]
+    result_parts = []
 
-st.sidebar.header("3. LLM 사용 위해 이동")
-st.sidebar.markdown("👉 **이동하여 ZIP 폴더와 프롬프트를 입력하세요.**")
-url = "https://chatgpt.com/c"  # 원하는 링크
+    for p in parts:
+        if not p:
+            continue
+        if word not in p:
+            result_parts.append(p)
+        else:
+            match = re.search(r'\(([^)]*)\)', p)
+            if match:
+                result_parts.append(match.group(1).strip())
 
-link_button = f"""
-    <a href="{url}" target="_blank">
-        <button>🔗 LLM용 프롬프트 페이지 이동</button>
-    </a>
-"""
+    return ', '.join(result_parts) if result_parts else None
 
-components.html(link_button, height=40)
+def top_tfidf_terms(row_tfidf, terms, k=3):
+    sorted_indices = row_tfidf.toarray().ravel().argsort()[::-1]
+    top_idxs = sorted_indices[:k]
+    return [terms[i] for i in top_idxs if row_tfidf[0, i] > 0]
+
+uploaded_file = st.sidebar.file_uploader("📂 엑셀 파일 업로드", type=["xlsx"])
+
+if uploaded_file:
+    df_c = pd.read_excel(uploaded_file)
+
+    # 기존 열은 그대로 두고 새로운 열 추가
+    df_c['Hashtag'] = df_c.apply(make_tags, axis=1)
+    df_c['지원기관'] = df_c.apply(lambda r: del_word(r, '지원기관', 'KSP'), axis=1)
+    df_c[['지원기관']] = df_c[['지원기관']].fillna('-')
+
+    target_cols = ['대상기관', '지원기관']
+    df_c[target_cols] = df_c[target_cols].fillna('')
+    for col in target_cols:
+        df_c[col] = df_c[col].str.replace(r'\s*등$', '', regex=True)
+
+    df_c['full_text'] = (
+        df_c[['주요 내용','기대 효과','요약']]
+        .fillna('')
+        .agg(' '.join, axis=1)
+    )
+
+    # TF–IDF
+    korean_stopwords = [
+        '의','가','이','은','들','는','을','를','에','와','과','도','으로','에서',
+        '하다','한다','있다','없다','좋다','같다','되다','수','을','기','등']
+    tfidf = TfidfVectorizer(max_df=0.8, min_df=2,
+                            stop_words=korean_stopwords,
+                            ngram_range=(1,1), max_features=2000)
+    X_tfidf = tfidf.fit_transform(df_c['full_text'])
+    terms = tfidf.get_feature_names_out()
+
+    # 기존 Hashtag + TF-IDF 키워드 합치기
+    new_tags = []
+    for i, vec in enumerate(X_tfidf):
+        kws = top_tfidf_terms(vec, terms, k=2)
+        existing = df_c.at[i, 'Hashtag']
+        if isinstance(existing, str):
+            exist_list = [t.strip() for t in existing.split(',') if t.strip()]
+        elif isinstance(existing, list):
+            exist_list = existing.copy()
+        else:
+            exist_list = []
+        for w in kws:
+            if w not in exist_list:
+                exist_list.append(w)
+        new_tags.append(exist_list)
+
+    df_c['Hashtag'] = new_tags
+    df_c['Hashtag_str'] = df_c['Hashtag'].apply(lambda lst: ', '.join(lst) if lst else None)
+
+    # 결과 미리보기
+    st.subheader("🔎 Hashtag 추출 결과 (상위 10행)")
+    st.dataframe(df_c.head(10))
+
+    # 다운로드
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_c.to_excel(writer, index=False, sheet_name="Result")
+    output.seek(0)
+
+    st.download_button(
+        "📥 결과 엑셀 다운로드",
+        data=output,
+        file_name="Hashtag_Result.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+else:
+    st.info("👈 사이드바에서 엑셀 파일을 업로드하세요.")
 
 # --------------------- 데이터 입력 ---------------------
 st.sidebar.header("데이터 입력")
