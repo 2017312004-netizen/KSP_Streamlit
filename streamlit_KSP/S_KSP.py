@@ -34,6 +34,7 @@ import zipfile
 import streamlit.components.v1 as components
 import json
 from sklearn.feature_extraction.text import TfidfVectorizer
+import tempfile
 
 # --------------------- 페이지/테마 ---------------------
 st.set_page_config(page_title="KSP Explorer (Pro v4)", layout="wide", page_icon="🌍")
@@ -162,11 +163,13 @@ STOP_LOW = {w.lower() for w in STOP}
 # --------------------- Changyeon ---------------------
 #######################################################
 st.sidebar.header("1. LLM 입력용 ZIP 폴더 생성")
-
 def extract_smooth_text_from_pdf(pdf_path: str) -> str:
+    """
+    PDF에서 텍스트 추출 후 문장 단위로 이어붙임
+    """
     full_text = ""
     with pdfplumber.open(pdf_path) as pdf:
-        for i, page in enumerate(pdf.pages):
+        for page in pdf.pages:
             page_text = page.extract_text() or ""
             page_text = page_text.strip()
             if not page_text:
@@ -178,35 +181,36 @@ def extract_smooth_text_from_pdf(pdf_path: str) -> str:
                 full_text += page_text + " "
     return full_text.strip()
 
-# 사이드바에서 PDF 폴더 경로 입력 받기
-base_dir = st.sidebar.text_input("📂 PDF 폴더 경로 입력")
+# 사이드바에서 ZIP 파일 업로드
+uploaded_zip = st.sidebar.file_uploader("📂 PDF 폴더(ZIP) 업로드", type="zip")
 
-if base_dir and os.path.isdir(base_dir):
-    st.success(f"선택된 폴더: {base_dir}")
+if uploaded_zip is not None:
+    results = []
+    txt_files = []
 
-    if st.sidebar.button("텍스트 추출 및 ZIP 생성"):
-        results = []
-        txt_files = []
+    # 업로드한 ZIP을 임시 폴더에 풀기
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with zipfile.ZipFile(uploaded_zip, "r") as zip_ref:
+            zip_ref.extractall(tmpdir)
 
-        # 임시 zip 메모리 버퍼
+        # 변환된 TXT들을 담을 ZIP 버퍼
         zip_buffer = io.BytesIO()
-
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for filename in os.listdir(base_dir):
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as out_zip:
+            for filename in os.listdir(tmpdir):
                 if not filename.lower().endswith(".pdf"):
                     continue
 
-                pdf_path = os.path.join(base_dir, filename)
+                pdf_path = os.path.join(tmpdir, filename)
                 txt_filename = os.path.splitext(filename)[0] + ".txt"
 
                 try:
                     text = extract_smooth_text_from_pdf(pdf_path)
                     if len(text) < 100:
-                        st.warning(f"⚠️ 텍스트 부족 → 건너뜀: {filename}")
+                        results.append(f"⚠️ 텍스트 부족 → 건너뜀: {filename}")
                         continue
 
-                    # zip 안에 직접 기록
-                    zipf.writestr(txt_filename, text)
+                    # 변환된 텍스트를 ZIP에 직접 저장
+                    out_zip.writestr(txt_filename, text)
                     txt_files.append(txt_filename)
                     results.append(f"✓ 저장 완료: {filename}")
                 except Exception as e:
@@ -225,7 +229,7 @@ if base_dir and os.path.isdir(base_dir):
                 mime="application/zip"
             )
 else:
-    st.info("👈 사이드바에서 폴더 경로를 입력하세요.")
+    st.info("👈 사이드바에서 ZIP 파일을 업로드하세요.")
 
 st.sidebar.header("2. LLM 입력용 프롬프트 복사")
 text = """
