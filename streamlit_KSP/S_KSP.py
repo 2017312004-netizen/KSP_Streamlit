@@ -253,6 +253,7 @@ Digital Industry and Jobs: [ICT Industry , Digital Skills],
 Digital Services: [Digital Public Infrastructure - DPI, E-Government]}
 """
 st.sidebar.code(text, language="text")
+st.sidebar.link_button("🌐 LLM 접속", "https://chatgpt.com/c")
 
 st.sidebar.header("3. Hashtag 추출 및 문장 결합")
 def make_tags(row):  # 1
