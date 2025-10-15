@@ -1488,12 +1488,50 @@ def clean(s): return s.astype(str).str.replace(r"\s+"," ",regex=True).str.strip(
 
 YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 
-def years_from_span(text: str):
-    if not isinstance(text, str): return []
-    t = text.replace("~","-").replace("–","-").replace("—","-")
+# def years_from_span(text: str):
+#     if not isinstance(text, str): return []
+#     t = text.replace("~","-").replace("–","-").replace("—","-")
+#     t = re.sub(r"[()]", " ", t)
+#     ys = [int(y) for y in YEAR_RE.findall(t)]
+#     return list(range(min(ys), max(ys)+1)) if ys else []
+try:
+    YEAR_RE
+except NameError:
+    YEAR_RE = re.compile(r"(?:19|20)\d{2}")
+
+def years_from_span(text):
+    """'2025-2026' → [2025,2026], '2025' → [2025], 숫자(2025)도 허용."""
+    if pd.isna(text):
+        return []
+
+    # 1) 숫자형(정수/실수/넘파이 숫자) 처리
+    if isinstance(text, (int, np.integer)):
+        y = int(text)
+        return [y] if 1990 <= y <= 2035 else []
+    if isinstance(text, (float, np.floating)):
+        y = int(text)
+        return [y] if 1990 <= y <= 2035 else []
+
+    # 2) 문자열 처리
+    t = str(text)
+    t = t.replace("~", "-").replace("–", "-").replace("—", "-")
     t = re.sub(r"[()]", " ", t)
+
+    # 단일 연도들 추출
     ys = [int(y) for y in YEAR_RE.findall(t)]
-    return list(range(min(ys), max(ys)+1)) if ys else []
+    ys = [y for y in ys if 1990 <= y <= 2035]
+
+    # 범위(2025-2026 등) 확장
+    ranges = re.findall(r"((?:19|20)\d{2})\s*-\s*((?:19|20)\d{2})", t)
+    for a, b in ranges:
+        a, b = int(a), int(b)
+        if a <= b:
+            ys.extend(range(a, b + 1))
+        else:
+            ys.extend(range(b, a + 1))
+
+    ys = sorted(set(ys))
+    return ys if ys else []
 
 SYN = {"sme":"SME","pki":"PKI","ai":"AI","ict":"ICT","bigdata":"빅데이터","big data":"빅데이터",
        "e-gp":"전자조달","egp":"전자조달","e-procurement":"전자조달","data center":"데이터센터","cloud":"클라우드",
