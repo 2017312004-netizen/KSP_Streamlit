@@ -1,7 +1,7 @@
 # S_KSP_clickpro_v4_plotly_patch_FIXED.py
 # ===============================================
 # KSP Explorer — Leaflet + Plotly (Pro v4 • Plotly patch, FIXED)
-# - 지도: ① 국가별 총계(클릭) ② WB Class 단일클래스(클릭)
+# - 지도: ① 국가별 총계(클릭) ② ICT 유형 단일클래스(클릭)
 # - 상세: 워드클라우드(항상: 해시태그+요약/내용) + 상위 키워드 가로막대(라벨 잘림 방지)
 # - 전역 대시보드: 도넛 2개 + 주제×WB 100% 누적 막대
 # - 연도 시각화: 순위 Bump / 100% 누적 막대 (토글)
@@ -242,7 +242,7 @@ STOP_LOW = {w.lower() for w in STOP}
 # 주요 내용은 현황과 이슈, 문제점, 제안 및 제언을 위주로 작성해.
 # 기대효과는 정성적 및 정량적 성과, 전망, 기대효과 중심으로 작성해.
 # 요약은 네 판단 하에 다룰 만한 부분을 종합적으로 작성해.
-# WB Class는 https://data360.worldbank.org/en/digital의 Topic을 label로 사용할 거야.
+# ICT 유형는 https://data360.worldbank.org/en/digital의 Topic을 label로 사용할 거야.
 # 'Connectivity', 'Data Infrastructure', 'Cybersecurity', 'Digital Industry and Jobs', 'Digital Services' 중에 선택해.
 # 보고서 성격에 따라 아래 사전을 참고하여 label을 할당해.
 # {Connectivity: [Telecom Networks, Telecom Subscriptions, Digital Adoption, Telecom Markets and Competition, Affordability, Telecom Regulation],
@@ -483,13 +483,13 @@ if df is None or df.empty:
 
 # 필수 컬럼 진단
 REQ = ["파일명","대상국","대상기관","주요 분야","지원기관","사업 기간","주요 내용","기대 효과",
-       "요약","WB Class","주제분류(대)","Hashtag","Hashtag_str","full_text"]
+       "요약","ICT 유형","주제분류(대)","Hashtag","Hashtag_str","full_text"]
 missing = [c for c in REQ if c not in df.columns]
 if missing:
     st.warning(f"필수 컬럼 누락: {missing}")
 
 with st.expander("데이터 미리보기 / 진단", expanded=False):
-    st.write(f"행 수: {len(df):,}  |  고유 대상국: {df['대상국'].nunique()}  |  고유 WB Class: {df['WB Class'].nunique()}")
+    st.write(f"행 수: {len(df):,}  |  고유 대상국: {df['대상국'].nunique()}  |  고유 ICT 유형: {df['ICT 유형'].nunique()}")
     st.dataframe(df.head(25), use_container_width=True)
 # --------------------- 데이터 입력 (끝) ---------------------
 
@@ -563,8 +563,8 @@ elif brief_mode == "파일 업로드":
 # 비활성화면 briefs_map == {}
 
 
-# ========================= WB Class 브리프(요약) 입력 =========================
-st.sidebar.header("WB Class 브리프(요약)")
+# ========================= ICT 유형 브리프(요약) 입력 =========================
+st.sidebar.header("ICT 유형 브리프(요약)")
 
 @st.cache_data(show_spinner=False)
 def load_wb_briefs_from_ipynb_bytes(b: bytes) -> dict:
@@ -617,7 +617,7 @@ def load_wb_briefs_auto(app_dir: Path) -> tuple[dict, str | None]:
     return {}, None
 
 
-wb_brief_mode = st.sidebar.radio("소스 (WB Class)", ["자동(같은 폴더)", "파일 업로드", "비활성화"],
+wb_brief_mode = st.sidebar.radio("소스 (ICT 유형)", ["자동(같은 폴더)", "파일 업로드", "비활성화"],
                                  index=0, horizontal=True)
 
 # '브리프 리로드' 버튼은 위에서 st.cache_data.clear()를 호출하므로 여기에도 적용됨
@@ -862,7 +862,7 @@ dfy = expand_years(df)     # 키워드/주제 상대 트렌드는 '국가 중복
 
 # --------------------- 보기 모드 ---------------------
 st.sidebar.header("보기 모드")
-mode = st.sidebar.radio("지도 유형", ["국가별 총계", "WB Class 단일클래스"], index=0)
+mode = st.sidebar.radio("지도 유형", ["국가별 총계", "ICT 유형 단일클래스"], index=0)
 
 # 연도 시각화 옵션 (히트맵 제거)
 st.sidebar.header("연도 시각화 방식")
@@ -1001,7 +1001,7 @@ def style_fig(fig, title=None, height=None, legend="top", top_margin=96,
 
 VIZ_BG = {
     "map_total":     "#E8F0FE",   # 국가별 총계 지도 카드
-    "map_wb":        "#F1ECE3",   # WB Class 단일 지도 카드
+    "map_wb":        "#F1ECE3",   # ICT 유형 단일 지도 카드
     "donut_subj":    "#F6F7FB",   # 주제 도넛
     "donut_wb":      "#E8F6EE",   # WB 도넛
     "stack_100":     "#FFF7ED",   # 100% 누적 막대(주제×WB)
@@ -1123,7 +1123,7 @@ if mode == "국가별 총계":
                 sub_years = sorted(set(_suby["연도"].dropna().astype(int).tolist()))
                 cA, cB, cC = st.columns(3)
                 with cA: st.metric("연도 범위", f"{min(sub_years) if sub_years else '-'}–{max(sub_years) if sub_years else '-'}")
-                with cB: st.metric("WB Class 고유", f"{sub['WB Class'].astype(str).str.strip().nunique():,}")
+                with cB: st.metric("ICT 유형 고유", f"{sub['ICT 유형'].astype(str).str.strip().nunique():,}")
                 with cC: st.metric("대상기관 수", f"{sub['대상기관'].nunique():,}")
 
             with tab_cloud:
@@ -1206,25 +1206,25 @@ if mode == "국가별 총계":
 
             with tab_table:
                 st.markdown("#### 프로젝트 목록")
-                cols_show = ["파일명","지원기관","사업 기간","주제분류(대)", "WB Class","주요 내용","기대 효과","Hashtag_str"]
+                cols_show = ["파일명","지원기관","사업 기간","주제분류(대)", "ICT 유형","주요 내용","기대 효과","Hashtag_str"]
                 st.dataframe(sub[cols_show].drop_duplicates().reset_index(drop=True), use_container_width=True)
     else:
         st.info("상단 지도에서 국가를 클릭하면 상세가 열립니다.")
 
-# ===================== ② WB Class 단일클래스 (지도를 국가 하이라이트로만 사용, 상세는 '클래스 전체' 기준) =====================
-elif mode == "WB Class 단일클래스":
-    st.subheader("WB Class 단일클래스 프로젝트 수")
+# ===================== ② ICT 유형 단일클래스 (지도를 국가 하이라이트로만 사용, 상세는 '클래스 전체' 기준) =====================
+elif mode == "ICT 유형 단일클래스":
+    st.subheader("ICT 유형 단일클래스 프로젝트 수")
 
     # 1) 클래스 선택
-    wb_classes = [c for c in sorted(df["WB Class"].astype(str).str.strip().dropna().unique()) if c and c != "nan"]
+    wb_classes = [c for c in sorted(df["ICT 유형"].astype(str).str.strip().dropna().unique()) if c and c != "nan"]
     if not wb_classes:
-        st.info("WB Class 값이 없습니다.")
+        st.info("ICT 유형 값이 없습니다.")
         st.stop()
 
-    sel = st.selectbox("WB Class 선택", wb_classes, index=0, key="wb_class_select_main")
+    sel = st.selectbox("ICT 유형 선택", wb_classes, index=0, key="wb_class_select_main")
 
     # 2) 지도(개요): 이 Class가 수행된 '국가 하이라이트'만, 클릭은 집계에 영향 X
-    sub_wb_geo = dfx[dfx["WB Class"].astype(str).str.strip() == sel]  # 지도용(국가 확장본 사용)
+    sub_wb_geo = dfx[dfx["ICT 유형"].astype(str).str.strip() == sel]  # 지도용(국가 확장본 사용)
     agg_geo = sub_wb_geo.groupby(["iso3", "country_ko"], as_index=False).agg(n=("파일명", "nunique"))
     value_map = {r.iso3: int(r.n) for _, r in agg_geo.iterrows()}
     gj = augment_geojson_values(world_geojson, key_on_info, value_map, "ksp_wb_cnt")
@@ -1247,10 +1247,10 @@ elif mode == "WB Class 단일클래스":
     clicked_iso = extract_iso_from_stfolium(ret)
 
     # 3) 상세 패널 — ★ 핵심: '클래스 전체' 기준으로 집계/시각화 ★
-    st.subheader("상세 패널 — WB Class")
+    st.subheader("상세 패널 — ICT 유형")
 
     # 본문 집계용은 '국가 확장 없는 원본 df'에서 필터 (동일 보고서가 다국가에 중복 집계되는 문제 방지)
-    sub_wb = df[df["WB Class"].astype(str).str.strip() == sel].copy()
+    sub_wb = df[df["ICT 유형"].astype(str).str.strip() == sel].copy()
 
     # 상단 타이틀 + 메트릭
     n_docs = sub_wb["파일명"].nunique()
@@ -1354,7 +1354,7 @@ elif mode == "WB Class 단일클래스":
     # ---- (4) 테이블: 클래스 전체 보고서 목록 ----
     with tab_table:
         st.markdown("#### 프로젝트 목록 (클래스 전체)")
-        cols_show = ["파일명","지원기관","사업 기간","주제분류(대)","WB Class","대상국","대상기관","주요 내용","기대 효과","Hashtag_str"]
+        cols_show = ["파일명","지원기관","사업 기간","주제분류(대)","ICT 유형","대상국","대상기관","주요 내용","기대 효과","Hashtag_str"]
         st.dataframe(sub_wb[cols_show].drop_duplicates().reset_index(drop=True), use_container_width=True)
 
 
@@ -1371,12 +1371,12 @@ fig1 = px.pie(subj_counts, names="주제분류(대)", values="count", hole=0.55)
 # 도넛
 fig1 = style_fig(fig1, "주제분류(대) 분포", legend="right", top_margin=120,
                  bg_color=VIZ_BG["donut_subj"], bg_alpha=0.5)
-# (2) WB Class 도넛
-wb_counts = (df["WB Class"].astype(str).str.strip().replace({"nan":"미분류"})
+# (2) ICT 유형 도넛
+wb_counts = (df["ICT 유형"].astype(str).str.strip().replace({"nan":"미분류"})
              .fillna("미분류").value_counts().reset_index())
-wb_counts.columns = ["WB Class","count"]
-fig2 = px.pie(wb_counts, names="WB Class", values="count", hole=0.55)
-fig2 = style_fig(fig2, "WB Class 분포", legend="right", top_margin=120,
+wb_counts.columns = ["ICT 유형","count"]
+fig2 = px.pie(wb_counts, names="ICT 유형", values="count", hole=0.55)
+fig2 = style_fig(fig2, "ICT 유형 분포", legend="right", top_margin=120,
                  bg_color=VIZ_BG["donut_wb"], bg_alpha=0.5)
 
 c0, c00 = st.columns([1,1], gap="large")
@@ -1384,7 +1384,7 @@ with c0: st.plotly_chart(fig1, use_container_width=True)
 with c00: st.plotly_chart(fig2, use_container_width=True)
 
 # (3) 주제×WB 100% 누적 막대
-cross = (df.assign(WB=df["WB Class"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류"))
+cross = (df.assign(WB=df["ICT 유형"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류"))
            .groupby(["주제분류(대)","WB"], as_index=False).size())
 pivot = cross.pivot(index="주제분류(대)", columns="WB", values="size").fillna(0)
 pivot_pct = pivot.div(pivot.sum(axis=1).replace(0, np.nan), axis=0).fillna(0).reset_index().melt(
@@ -1395,7 +1395,7 @@ fig3.update_layout(bargap=0.68, bargroupgap=0.08)   # 값↑ = 간격↑ = 막�
 
 
 # 100% 누적 막대
-st.plotly_chart(style_fig(fig3, "주제분류(대)별 WB Class 비중 (100%)",
+st.plotly_chart(style_fig(fig3, "주제분류(대)별 ICT 유형 비중 (100%)",
                           legend="right", top_margin=120,
                           bg_color=VIZ_BG["stack_100"], bg_alpha=0.5),
                 use_container_width=True)
@@ -1432,13 +1432,13 @@ def draw_year_chart(g, group_col, title_prefix):
 
 if not dfy_valid.empty:
     g_subj = time_share(dfy_valid, "주제분류(대)")
-    g_wb   = time_share(dfy_valid.assign(WB=dfy_valid["WB Class"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류")), "WB")
+    g_wb   = time_share(dfy_valid.assign(WB=dfy_valid["ICT 유형"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류")), "WB")
 else:
     g_subj = pd.DataFrame(columns=["연도","주제분류(대)","size","pct"])
     g_wb   = pd.DataFrame(columns=["연도","WB","size","pct"])
 
 fig4 = draw_year_chart(g_subj, "주제분류(대)", "연도별 주제분류(대) 비중")
-fig5 = draw_year_chart(g_wb, "WB", "연도별 WB Class 비중")
+fig5 = draw_year_chart(g_wb, "WB", "연도별 ICT 유형 비중")
 c1, c2 = st.columns([1,1], gap="large")
 with c1: st.plotly_chart(fig4, use_container_width=True)
 with c2: st.plotly_chart(fig5, use_container_width=True)
@@ -1533,7 +1533,7 @@ def build_keyword_time(df_in: pd.DataFrame, stop_extra: set):
 
     # 동적 불용어(대분류/클래스/국가 등)
     dyn = set()
-    for col in ["주제분류(대)","WB Class","대상국","대상기관","지원기관"]:
+    for col in ["주제분류(대)","ICT 유형","대상국","대상기관","지원기관"]:
         if col in df_local.columns: dyn |= set(map(str.lower, df_local[col].astype(str).unique()))
     stopset = {w.lower() for w in stop_extra} | dyn
 
