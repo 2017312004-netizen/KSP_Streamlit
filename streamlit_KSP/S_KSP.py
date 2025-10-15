@@ -1536,7 +1536,7 @@ def years_from_span(text):
 
 SYN = {"sme":"SME","pki":"PKI","ai":"AI","ict":"ICT","bigdata":"빅데이터","big data":"빅데이터",
        "e-gp":"전자조달","egp":"전자조달","e-procurement":"전자조달","data center":"데이터센터","cloud":"클라우드",
-       "platform":"플랫폼","platfrom":"플랫폼","플렛폼":"플랫폼"}
+       "platform":"플랫폼","platfrom":"플랫폼","플렛폼":"플랫폼", "ifmis":"IFMIS", "bim":"BIM"}
 
 def norm_token(x: str) -> str:
     x = re.sub(r"[\"'’“”()\[\]{}<>]", "", x.strip()); xl = x.lower()
