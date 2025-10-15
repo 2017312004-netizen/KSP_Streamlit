@@ -234,10 +234,10 @@ STOP_LOW = {w.lower() for w in STOP}
 # text = """
 # 네 역할은 Tabulation machine이야.
 # zip 폴더의 압축을 해제한 뒤 정보를 추출해서 table을 만들 거야.
-# table의 열은 ['파일명', '대상국', '대상기관', '주요 분야', '사업 기간, '지원기관', '주요 내용', '기대 효과', '요약', 'WB_Class']로 구성해.
+# table의 열은 ['파일명', '대상국', '대상기관', '주요 분야', '연도, '지원기관', '주요 내용', '기대 효과', '요약', 'WB_Class']로 구성해.
 # 파일명은 zip 폴더 내 확장자 및 영문, 국문 표기를 제외한 파일명을 입력해.
 # 대상국, 대상기관, 주요 분야, 지원기관은 파일 내용으로부터 추출해. 이들은 한국어 label 형태로 입력해.
-# 사업 기간은 연도와 대시를 사용해서 나타내.
+# 연도은 연도와 대시를 사용해서 나타내.
 # 주요 내용, 기대 효과, 요약은 각각 5문장 이상, 10문장 이하의 문장으로 입력해.
 # 주요 내용은 현황과 이슈, 문제점, 제안 및 제언을 위주로 작성해.
 # 기대효과는 정성적 및 정량적 성과, 전망, 기대효과 중심으로 작성해.
@@ -482,7 +482,7 @@ if df is None or df.empty:
     st.stop()
 
 # 필수 컬럼 진단
-REQ = ["파일명","대상국","대상기관","주요 분야","지원기관","사업 기간","주요 내용","기대 효과",
+REQ = ["파일명","대상국","대상기관","주요 분야","지원기관","연도","주요 내용","기대 효과",
        "요약","ICT 유형","주제분류(대)","Hashtag","Hashtag_str","full_text"]
 missing = [c for c in REQ if c not in df.columns]
 if missing:
@@ -852,7 +852,7 @@ def expand_years(df_in: pd.DataFrame) -> pd.DataFrame:
         if b - a > 30: b = a
         return list(range(a, b+1))
     dfy = df_in.copy()
-    dfy["연도목록"] = dfy["사업 기간"].apply(years_from_text)
+    dfy["연도목록"] = dfy["연도"].apply(years_from_text)
     dfy = dfy.explode("연도목록")
     dfy = dfy.rename(columns={"연도목록":"연도"})
     dfy["연도"] = pd.to_numeric(dfy["연도"], errors="coerce").astype("Int64")
@@ -1206,7 +1206,7 @@ if mode == "국가별 총계":
 
             with tab_table:
                 st.markdown("#### 프로젝트 목록")
-                cols_show = ["파일명","지원기관","사업 기간","주제분류(대)", "ICT 유형","주요 내용","기대 효과","Hashtag_str"]
+                cols_show = ["파일명","지원기관","연도","주제분류(대)", "ICT 유형","주요 내용","기대 효과","Hashtag_str"]
                 st.dataframe(sub[cols_show].drop_duplicates().reset_index(drop=True), use_container_width=True)
     else:
         st.info("상단 지도에서 국가를 클릭하면 상세가 열립니다.")
@@ -1354,7 +1354,7 @@ elif mode == "ICT 유형 단일클래스":
     # ---- (4) 테이블: 클래스 전체 보고서 목록 ----
     with tab_table:
         st.markdown("#### 프로젝트 목록 (클래스 전체)")
-        cols_show = ["파일명","지원기관","사업 기간","주제분류(대)","ICT 유형","대상국","대상기관","주요 내용","기대 효과","Hashtag_str"]
+        cols_show = ["파일명","지원기관","연도","주제분류(대)","ICT 유형","대상국","대상기관","주요 내용","기대 효과","Hashtag_str"]
         st.dataframe(sub_wb[cols_show].drop_duplicates().reset_index(drop=True), use_container_width=True)
 
 
@@ -1527,7 +1527,7 @@ def build_keyword_time(df_in: pd.DataFrame, stop_extra: set):
     df_local = df_in.copy()
     if HASHTAG_COL:
         df_local[HASHTAG_COL] = clean(df_local[HASHTAG_COL])
-    years_list = df_local["사업 기간"].apply(years_from_span)
+    years_list = df_local["연도"].apply(years_from_span)
     all_years  = sorted({y for ys in years_list for y in (ys or [])})
     if not all_years: return [], {}, pd.Series([], dtype=int), pd.DataFrame()
 
@@ -1796,7 +1796,7 @@ if all_years:
         fig_down = force_legend_top_padding(fig_down, base_top=130)  # ★ 추가
         st.plotly_chart(fig_down, use_container_width=True, config={"displayModeBar": False})
 else:
-    st.info("사업 기간에서 연도를 추출할 수 없어 키워드 상대 트렌드를 건너뜁니다.")
+    st.info("연도에서 연도를 추출할 수 없어 키워드 상대 트렌드를 건너뜁니다.")
 
 # =====================================================================
 # 추가 시각화 ②: 대표 '주제(키워드)' 상대 트렌드(상승/하락) — Plotly
@@ -1845,7 +1845,7 @@ if all_years:
     theme_year_cnt = defaultdict(int)
     for _, row in df.iterrows():
         themes = detect_themes(normalize_text(row))
-        ys = years_from_span(row.get("사업 기간", ""))
+        ys = years_from_span(row.get("연도", ""))
         if not themes or not ys: continue
         for y in ys:
             for th in themes:
@@ -1910,7 +1910,7 @@ if all_years:
     else:
         st.info("텍스트에서 주제를 감지하지 못해 '주제(키워드)' 트렌드를 생략합니다.")
 else:
-    st.info("사업 기간에서 연도를 추출할 수 없어 '주제(키워드)' 트렌드를 건너뜁니다.")
+    st.info("연도에서 연도를 추출할 수 없어 '주제(키워드)' 트렌드를 건너뜁니다.")
 
 # --------------------- 설치 / 실행 ---------------------
 with st.expander("설치 / 실행"):
