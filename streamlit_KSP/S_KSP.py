@@ -773,19 +773,41 @@ def _year_text_series(df_in: pd.DataFrame) -> pd.Series:
 
 @st.cache_data(show_spinner=False)
 def expand_years(df_in: pd.DataFrame) -> pd.DataFrame:
+    """
+    - YEAR_SOURCE 지정/자동 탐색(_year_text_series)로 연도 텍스트를 확보
+    - years_from_span으로 연도 리스트 추출 후 explode
+    - '연도'가 DataFrame(중복명)으로 생겨도 안전하게 1-D로 강제
+    """
     if df_in is None or df_in.empty:
-        return pd.DataFrame(columns=["연도"], dtype="Int64")
-
-    # 🔁 여기 한 줄로 통일: 컬럼 유무와 관계없이 안전한 텍스트 소스 확보
-    ser = _year_text_series(df_in)
-
-    years_list = ser.apply(years_from_span)
-    if not years_list.apply(lambda x: len(x) > 0).any():
         return pd.DataFrame({"연도": pd.Series([], dtype="Int64")})
 
-    dfy = df_in.copy().assign(연도목록=years_list).explode("연도목록").rename(columns={"연도목록": "연도"})
-    dfy["연도"] = pd.to_numeric(dfy["연도"], errors="coerce").astype("Int64")
+    # ① 중복 컬럼 제거
+    df1 = df_in.loc[:, ~df_in.columns.duplicated()].copy()
+
+    # ② 연도 원천 시리즈 확보 (지정 컬럼 > 관용 컬럼들 > 텍스트 결합)
+    ser = _year_text_series(df1)  # ← 앞서 추가한 헬퍼
+
+    # ③ 연도 파싱
+    years_list = ser.apply(years_from_span)
+    if not years_list.apply(lambda x: bool(x)).any():
+        return pd.DataFrame({"연도": pd.Series([], dtype="Int64")})
+
+    # ④ explode
+    dfy = df1.assign(__years=years_list).explode("__years").rename(columns={"__years": "연도"})
+
+    # ⑤ '연도'를 반드시 1-D Series로 강제
+    y = dfy["연도"]
+    if isinstance(y, pd.DataFrame):  # 혹시라도 또 중복되면 첫 열 사용
+        y = y.iloc[:, 0]
+    y = pd.to_numeric(y, errors="coerce").astype("Int64")
+
+    # 동일 이름 컬럼들 정리 후 삽입
+    dup_cols = [c for c in dfy.columns if c == "연도"]
+    dfy = dfy.drop(columns=dup_cols)
+    dfy.insert(0, "연도", y.values)
+
     return dfy
+
 
 
 
@@ -1335,15 +1357,13 @@ st.plotly_chart(style_fig(fig3, "주제분류(대)별 ICT 유형 비중 (100%)",
 # ---------- (4)(5) 연도별 비중 — 선택형 시각화 (히트맵 제거) ----------
 dfy_valid = dfy.dropna(subset=["연도"]).copy()
 
-def time_share(df_in, group_col):
+def time_share(df_in: pd.DataFrame, group_col: str) -> pd.DataFrame:
     """
-    연도별로 group_col(예: '주제분류(대)', '대상국', 'ICT 유형')의 비중을 계산
-    - 중복 컬럼명 및 비정상적 구조(1차원 아님) 자동 방어
+    - 중복 컬럼 제거
+    - '연도'와 group_col이 DataFrame로 들어오면 첫 열만 사용
     """
-    # 1) 중복 컬럼 제거
     df1 = df_in.loc[:, ~df_in.columns.duplicated()].copy()
 
-    # 2) '연도'와 group_col이 DataFrame(중복명)일 경우 첫 열만 사용
     y = df1["연도"]
     if isinstance(y, pd.DataFrame):
         y = y.iloc[:, 0]
@@ -1352,14 +1372,10 @@ def time_share(df_in, group_col):
     if isinstance(gcol, pd.DataFrame):
         gcol = gcol.iloc[:, 0]
 
-    # 3) 필요한 두 컬럼만 임시 DataFrame으로 구성
-    tmp = pd.DataFrame({"연도": y, group_col: gcol}).dropna(subset=["연도", group_col])
-
-    # 4) 그룹화 및 비중 계산
+    tmp = pd.DataFrame({"연도": y, group_col: gcol})
     g = tmp.groupby(["연도", group_col], as_index=False).size()
     totals = g.groupby("연도")["size"].transform("sum")
     g["pct"] = g["size"] / totals
-
     return g
 
 
@@ -1968,6 +1984,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
