@@ -171,6 +171,12 @@ DEFAULT_DATA_PATH = r"df1_20250901_145328.xlsx"
 DATA_DIR = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
 SEARCH_DIRS = [DATA_DIR, DATA_DIR / "data", DATA_DIR / "assets"]
 
+def ensure_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
+    cols = pd.Series(df.columns)
+    if cols.duplicated().any():
+        # 동일 이름 열이 여러 개면 첫 번째만 남기고 나머지는 버림
+        df = df.loc[:, ~cols.duplicated()].copy()
+    return df
 
 # === NEW: 컬럼 정규화(유사명 → 표준명) ===
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -309,6 +315,7 @@ if src_mode == "자동(같은 폴더)":
         st.sidebar.caption(f"경로: `{auto_files[sel_idx]}`")
         df = load_from_path(str(auto_files[sel_idx]))
         df = normalize_columns(df)
+        df = ensure_unique_columns(df)
 
     else:
         st.sidebar.info("같은 폴더(또는 ./data, ./assets)에서 적합한 데이터 파일을 찾지 못했습니다. 다른 소스 방식을 사용하세요.")
@@ -318,6 +325,7 @@ elif src_mode == "파일 업로드":
     if up is not None:
         df = load_from_uploader(up)
         df = normalize_columns(df)
+        df = ensure_unique_columns(df)
 
 
 elif src_mode == "CSV 붙여넣기":
@@ -325,6 +333,7 @@ elif src_mode == "CSV 붙여넣기":
     if pasted.strip():
         df = load_from_csv_text(pasted)
         df = normalize_columns(df)
+        df = ensure_unique_columns(df)
 
 
 else:  # 파일 경로
@@ -334,6 +343,7 @@ else:  # 파일 경로
     if os.path.exists(data_path):
         df = load_from_path(data_path)
         df = normalize_columns(df)
+        df = ensure_unique_columns(df)
 
         st.sidebar.caption(f"경로: `{Path(data_path).resolve()}`")
 
@@ -1813,6 +1823,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
