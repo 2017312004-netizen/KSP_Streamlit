@@ -855,7 +855,7 @@ mode = st.sidebar.radio("지도 유형", ["국가별 총계", "ICT 유형 단일
 
 # 연도 시각화 옵션 (히트맵 제거)
 st.sidebar.header("연도 시각화 방식")
-YEAR_OPTIONS = ["100% 누적 막대", "순위 Bump"]
+YEAR_OPTIONS = ["비중 Bump", "순위 Bump"]
 year_mode = st.sidebar.selectbox("표현 방식", YEAR_OPTIONS, index=0, key="year_mode")
 
 
@@ -2070,6 +2070,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
