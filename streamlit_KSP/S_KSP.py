@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from PIL import Image
+import itertools
 from PIL import ImageFont
 import streamlit as st
 import folium
@@ -25,16 +26,6 @@ from wordcloud import WordCloud
 import plotly.express as px
 import plotly.graph_objects as go
 from matplotlib import font_manager, rcParams
-
-#######################################################
-# --------------------- Changyeon ---------------------
-# import pdfplumber
-# import zipfile
-# import streamlit.components.v1 as components
-# import json
-# from sklearn.feature_extraction.text import TfidfVectorizer
-# import tempfile
-#######################################################
 
 # --------------------- 페이지/테마 ---------------------
 st.set_page_config(page_title="KSP Explorer (Pro v4)", layout="wide", page_icon="🌍")
@@ -408,6 +399,44 @@ with st.expander("데이터 미리보기 / 진단", expanded=False):
     st.write(f"행 수: {len(df):,}  |  고유 대상국: {df['대상국'].nunique()}  |  고유 ICT 유형: {df['ICT 유형'].nunique()}")
     st.dataframe(df.head(25), use_container_width=True)
 # --------------------- 데이터 입력 (끝) ---------------------
+# ========================= 전역 컬러 팔레트 =========================
+
+
+# 1) 라벨 순서(카테고리 순서) 고정 — '미분류'는 항상 맨 뒤로
+def ordered_with_misc_last(values, misc=("미분류", "기타", "기타/미분류")):
+    vals = [str(v).strip() for v in values if str(v).strip()]
+    uniq = []
+    for v in vals:
+        if v not in uniq:
+            uniq.append(v)
+    front = [v for v in uniq if v not in misc]
+    back  = [v for v in uniq if v in misc]
+    return front + back
+
+WB_ORDER   = ordered_with_misc_last(df["ICT 유형"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류").tolist())
+SUBJ_ORDER = ordered_with_misc_last(df["주제분류(대)"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류").tolist())
+
+# 2) 충분히 긴 색 목록 (Plotly 기본 정성 팔레트 여러 개 이어붙이기)
+_BASE_QUALS = (
+    px.colors.qualitative.Set2
+    + px.colors.qualitative.Set3
+    + px.colors.qualitative.Dark24
+    + px.colors.qualitative.Pastel
+    + px.colors.qualitative.Bold
+    + px.colors.qualitative.Safe
+)
+
+def make_color_map(names, base_colors=_BASE_QUALS):
+    # 이름 목록 길이만큼 순환해서 색 배정(순서 안정)
+    cmap = {}
+    cycle = itertools.cycle(base_colors)
+    for n in names:
+        if n not in cmap:
+            cmap[n] = next(cycle)
+    return cmap
+
+COLOR_WB   = make_color_map(WB_ORDER)
+COLOR_SUBJ = make_color_map(SUBJ_ORDER)
 
 
 def _font_path_safe():
@@ -855,7 +884,7 @@ mode = st.sidebar.radio("지도 유형", ["국가별 총계", "ICT 유형 단일
 
 # 연도 시각화 옵션 (히트맵 제거)
 st.sidebar.header("연도 시각화 방식")
-YEAR_OPTIONS = ["비중 Bump", "순위 Bump"]
+YEAR_OPTIONS = ["Line Bump", "순위 Bump"]
 year_mode = st.sidebar.selectbox("표현 방식", YEAR_OPTIONS, index=0, key="year_mode")
 
 
@@ -1359,20 +1388,25 @@ elif mode == "ICT 유형 단일클래스":
 st.markdown("---")
 st.subheader("전체 분포 대시보드")
 
-# (1) 주제분류(대) 도넛
-subj_counts = df["주제분류(대)"].fillna("미분류").value_counts().reset_index()
+# 주제 도넛
+subj_counts = df["주제분류(대)"].fillna("미분류").astype(str).str.strip().replace({"nan":"미분류"}).value_counts().reindex(SUBJ_ORDER, fill_value=0).reset_index()
 subj_counts.columns = ["주제분류(대)","count"]
-fig1 = px.pie(subj_counts, names="주제분류(대)", values="count", hole=0.55)
-# 도넛
+fig1 = px.pie(subj_counts, names="주제분류(대)", values="count", hole=0.55,
+              category_orders={"주제분류(대)": SUBJ_ORDER},
+              color="주제분류(대)", color_discrete_map=COLOR_SUBJ)
 fig1 = style_fig(fig1, "주제분류(대) 분포", legend="right", top_margin=120,
                  bg_color=VIZ_BG["donut_subj"], bg_alpha=0.5)
-# (2) ICT 유형 도넛
-wb_counts = (df["ICT 유형"].astype(str).str.strip().replace({"nan":"미분류"})
-             .fillna("미분류").value_counts().reset_index())
+
+# ICT 도넛
+wb_counts = (df["ICT 유형"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류").value_counts()
+             .reindex(WB_ORDER, fill_value=0).reset_index())
 wb_counts.columns = ["ICT 유형","count"]
-fig2 = px.pie(wb_counts, names="ICT 유형", values="count", hole=0.55)
+fig2 = px.pie(wb_counts, names="ICT 유형", values="count", hole=0.55,
+              category_orders={"ICT 유형": WB_ORDER},
+              color="ICT 유형", color_discrete_map=COLOR_WB)
 fig2 = style_fig(fig2, "ICT 유형 분포", legend="right", top_margin=120,
                  bg_color=VIZ_BG["donut_wb"], bg_alpha=0.5)
+
 
 c0, c00 = st.columns([1,1], gap="large")
 with c0: st.plotly_chart(fig1, use_container_width=True)
@@ -1381,19 +1415,28 @@ with c00: st.plotly_chart(fig2, use_container_width=True)
 # (3) 주제×WB 100% 누적 막대
 cross = (df.assign(WB=df["ICT 유형"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류"))
            .groupby(["주제분류(대)","WB"], as_index=False).size())
+
 pivot = cross.pivot(index="주제분류(대)", columns="WB", values="size").fillna(0)
-pivot_pct = pivot.div(pivot.sum(axis=1).replace(0, np.nan), axis=0).fillna(0).reset_index().melt(
-    id_vars="주제분류(대)", var_name="WB", value_name="pct")
-fig3 = px.bar(pivot_pct, x="주제분류(대)", y="pct", color="WB", barmode="stack")
+pivot_pct = (pivot
+    .div(pivot.sum(axis=1).replace(0, np.nan), axis=0)
+    .fillna(0)
+    .reset_index()
+    .melt(id_vars="주제분류(대)", var_name="WB", value_name="pct"))
+
+fig3 = px.bar(
+    pivot_pct,
+    x="주제분류(대)", y="pct",
+    color="WB", barmode="stack",
+    category_orders={"WB": WB_ORDER, "주제분류(대)": SUBJ_ORDER},
+    color_discrete_map=COLOR_WB,
+)
 fig3.update_yaxes(range=[0,1], tickformat=".0%")
-fig3.update_layout(bargap=0.68, bargroupgap=0.08)   # 값↑ = 간격↑ = 막대 슬림
+fig3.update_layout(bargap=0.68, bargroupgap=0.08)
+fig3 = style_fig(fig3, "주제분류(대)별 ICT 유형 비중 (100%)",
+                 legend="right", top_margin=120,
+                 bg_color=VIZ_BG["stack_100"], bg_alpha=0.5)
+st.plotly_chart(fig3, use_container_width=True)
 
-
-# 100% 누적 막대
-st.plotly_chart(style_fig(fig3, "주제분류(대)별 ICT 유형 비중 (100%)",
-                          legend="right", top_margin=120,
-                          bg_color=VIZ_BG["stack_100"], bg_alpha=0.5),
-                use_container_width=True)
 
 # ---------- (4)(5) 연도별 비중 — 선택형 시각화 (히트맵 제거) ----------
 dfy_valid = dfy.dropna(subset=["연도"]).copy()
@@ -1422,24 +1465,39 @@ def time_share(df_in: pd.DataFrame, group_col: str) -> pd.DataFrame:
 
 def draw_year_chart(g, group_col, title_prefix):
     if g.empty:
-        fig = px.line(); return style_fig(fig, f"{title_prefix} (연도 추출 불가)")
+        fig = px.line()
+        return style_fig(fig, f"{title_prefix} (연도 추출 불가)")
+
+    is_subj = (group_col == "주제분류(대)")
+    c_orders = {"연도": sorted(g["연도"].unique())}
+    if is_subj:
+        c_orders[group_col] = SUBJ_ORDER
+        color_map = COLOR_SUBJ
+    else:
+        # group_col == "WB" (ICT 유형)
+        c_orders[group_col] = WB_ORDER
+        color_map = COLOR_WB
 
     if year_mode == "순위 Bump":
         ranks = g.copy()
         ranks["rank"] = ranks.groupby("연도")["pct"].rank(ascending=False, method="dense")
-        fig = px.line(ranks, x="연도", y="rank", color=group_col, markers=True)
+        fig = px.line(
+            ranks, x="연도", y="rank", color=group_col, markers=True,
+            category_orders=c_orders, color_discrete_map=color_map
+        )
         fig.update_traces(line=dict(width=3), marker=dict(size=8))
         fig.update_yaxes(autorange="reversed", dtick=1, title="순위(1=최상)")
         return style_fig(fig, f"{title_prefix} — 순위 Bump", legend="top", top_margin=120)
-    else:  # 100% 누적 막대
-        # fig = px.bar(g, x="연도", y="pct", color=group_col, barmode="stack", labels={"pct":"비중"})
-        # fig.update_yaxes(range=[0,1], tickformat=".0%")
-        # return style_fig(fig, f"{title_prefix} — 100% 누적 막대", legend="top", top_margin=120)
-        
-        fig = px.line(g, x="연도", y="pct", color=group_col, labels={"pct": "비중"}, markers=True)  # 각 점을 동그라미로 표시
-        fig.update_yaxes(range=[0, 1], tickformat=".0%")
-        fig.update_layout(title="비율 추세 (라인 플롯)", legend=dict(orientation="h", y=1.1))
+    else:
+        # 100% 누적 막대 대신 라인 비중 그래프를 쓰기로 한 현재 코드에 맞춤
+        fig = px.line(
+            g, x="연도", y="pct", color=group_col, markers=True,
+            labels={"pct":"비중"},
+            category_orders=c_orders, color_discrete_map=color_map
+        )
+        fig.update_yaxes(range=[0,1], tickformat=".0%")
         return style_fig(fig, f"{title_prefix} — 비중 Bump", legend="top", top_margin=120)
+
 
 if not dfy_valid.empty:
     g_subj = time_share(dfy_valid, "주제분류(대)")
@@ -2070,6 +2128,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
