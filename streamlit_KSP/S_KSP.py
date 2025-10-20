@@ -1806,125 +1806,76 @@ else:
     st.info("사업 기간에서 연도를 추출할 수 없어 키워드 상대 트렌드를 건너뜁니다.")
 
 # =====================================================================
-# 키워드 트렌드 — 직접 고르기 (체크박스 테이블 + 검색 + 전체선택)
+# 완전 수동형 키워드 트렌드 선택 (검색 + 체크박스 + 시각화)
 # =====================================================================
 st.markdown("---")
-st.subheader("키워드 트렌드 — 직접 고르기")
+st.subheader("키워드 트렌드 — 수동 선택형")
 
 if all_years:
-    # 0) AI 자동(상/하)과 겹치지 않게 후보 풀에서 제외
-    ai_used = set()
-    try:
-        ai_used |= set(rise_sel)
-        ai_used |= set(fall_sel)
-    except Exception:
-        pass
+    # 1) 후보 풀: 전체 키워드
+    all_tokens = sorted(lift_all.columns.tolist())
 
-    # 1) 후보 풀 생성 (AI 자동 제외)
-    all_tokens = [k for k in lift_all.columns if k not in ai_used]
+    # 2) 검색 및 필터
+    cL, cM, cR = st.columns([2,1,1])
+    with cL:
+        search_kw = st.text_input("검색(부분 일치)", value="", placeholder="예: 데이터, AI, e-GP ...")
+    with cM:
+        N_show = st.slider("표시할 후보 수", 10, 200, 40, 10)
+    with cR:
+        equalize = st.checkbox("상/하 그래프 개수 동일하게", value=True)
 
-    # 최근 구간 정의
-    recent_win = all_years[-min(RECENT_YEARS, len(all_years)):]
-    x_nums = np.array(years_plot, dtype=float)
-
-    # 최근 출현수, 모멘텀(기울기) 계산
-    def hits_in(years, k): return sum(kw_doc[y][k] for y in years)
-    slope = {}
-    for k in all_tokens:
-        yk = lift_all.loc[years_plot, k].astype(float).values
-        if np.all(~np.isfinite(yk)):
-            slope[k] = 0.0
-        else:
-            yk = np.nan_to_num(yk, nan=np.nanmedian(yk))
-            try:
-                slope[k] = np.polyfit(x_nums, yk, 1)[0]
-            except Exception:
-                slope[k] = 0.0
-
-    # 2) 후보 테이블 만들기
-    _rows = []
-    for k in all_tokens:
-        _rows.append({
-            "선택": False,
-            "키워드": k,
-            "최근출현(건)": hits_in(recent_win, k),
-            "모멘텀(기울기)": slope.get(k, 0.0),
-        })
-    cand_df_full = pd.DataFrame(_rows).sort_values(
-        ["최근출현(건)", "모멘텀(기울기)"], ascending=[False, False]
-    ).reset_index(drop=True)
-
-    # 3) 검색 + 전체선택/해제
-    with st.container():
-        cL, cM, cR = st.columns([2,1,1])
-        with cL:
-            q = st.text_input("검색(포함 일치)", value="", placeholder="예: e-GP, PKI, 데이터센터 ...")
-        with cM:
-            N_show = st.slider("표시 행 개수", 10, 200, 40, 10)
-        with cR:
-            equalize = st.checkbox("상/하 동일 개수로 맞추기", value=True)
-
-    if q.strip():
-        mask = cand_df_full["키워드"].str.contains(q.strip(), case=False, na=False)
-        cand_df = cand_df_full[mask].copy()
+    if search_kw.strip():
+        candidates = [k for k in all_tokens if search_kw.lower() in k.lower()]
     else:
-        cand_df = cand_df_full.copy()
+        candidates = all_tokens
 
-    cand_df = cand_df.head(N_show).reset_index(drop=True)
+    candidates = candidates[:N_show]
 
-    # 선택 토글 버튼
-    b1, b2 = st.columns([1,1])
+    # 3) 전체 선택/해제 버튼
+    b1, b2 = st.columns(2)
     with b1:
-        select_all = st.button("현재 목록 전체 선택")
+        select_all = st.button("전체 선택")
     with b2:
         clear_all = st.button("선택 해제")
 
-    if "manual_pick_df" not in st.session_state:
-        st.session_state.manual_pick_df = cand_df.copy()
-    else:
-        # 컬럼 정합성 보장
-        missing_cols = [c for c in ["선택","키워드","최근출현(건)","모멘텀(기울기)"] if c not in st.session_state.manual_pick_df.columns]
-        if missing_cols:
-            st.session_state.manual_pick_df = cand_df.copy()
+    # 4) 체크박스 리스트
+    if "manual_selection" not in st.session_state:
+        st.session_state.manual_selection = {k: False for k in candidates}
 
-    # 검색/행수 바뀌면 뷰 갱신
-    view_df = cand_df.copy()
+    # 검색 결과 바뀌면 상태 초기화
+    if set(st.session_state.manual_selection.keys()) != set(candidates):
+        st.session_state.manual_selection = {k: False for k in candidates}
+
     if select_all:
-        view_df["선택"] = True
+        for k in candidates:
+            st.session_state.manual_selection[k] = True
     if clear_all:
-        view_df["선택"] = False
-    st.session_state.manual_pick_df = view_df
+        for k in candidates:
+            st.session_state.manual_selection[k] = False
 
-    edited = st.data_editor(
-        st.session_state.manual_pick_df,
-        use_container_width=True,
-        key="kw_pick_editor",
-        hide_index=True,
-        column_config={
-            "선택": st.column_config.CheckboxColumn("선택", help="그래프에 넣을 키워드를 체크하세요."),
-            "키워드": st.column_config.TextColumn("키워드"),
-            "최근출현(건)": st.column_config.NumberColumn("최근출현(건)", format="%d"),
-            "모멘텀(기울기)": st.column_config.NumberColumn("모멘텀(기울기)", format="%.3f"),
-        }
-    )
+    selected_keys = []
+    with st.container():
+        for k in candidates:
+            st.session_state.manual_selection[k] = st.checkbox(
+                k, value=st.session_state.manual_selection[k]
+            )
+            if st.session_state.manual_selection[k]:
+                selected_keys.append(k)
 
-    picked = edited[edited["선택"]].copy()
-    st.caption(f"선택된 키워드: {len(picked)}개")
+    st.caption(f"선택된 키워드: {len(selected_keys)}개")
 
-    # 4) 그리기
+    # 5) 그래프 그리기
     draw_btn = st.button("그래프 그리기", type="primary")
     if draw_btn:
-        keys = picked["키워드"].tolist()
-        if not keys:
+        if not selected_keys:
             st.warning("키워드를 1개 이상 선택하세요.")
         else:
-            # 2-of-3 규칙으로 상/하 분리
             sig_up   = ((last_lift >= 1.0).astype(int) + (cagr_lift > 0).astype(int) + (delta_share > 0).astype(int))
             sig_down = ((last_lift < 1.0).astype(int)  + (cagr_lift < 0).astype(int) + (delta_share < 0).astype(int))
-            up_keys   = [k for k in keys if (k in sig_up.index and sig_up[k] >= 2)]
-            down_keys = [k for k in keys if (k in sig_down.index and sig_down[k] >= 2)]
 
-            # 동일 개수 맞추기(가능한 경우)
+            up_keys   = [k for k in selected_keys if (k in sig_up.index and sig_up[k] >= 2)]
+            down_keys = [k for k in selected_keys if (k in sig_down.index and sig_down[k] >= 2)]
+
             if equalize and up_keys and down_keys:
                 m = min(len(up_keys), len(down_keys))
                 up_keys, down_keys = up_keys[:m], down_keys[:m]
@@ -1940,7 +1891,7 @@ if all_years:
                     fup = force_legend_top_padding(fup, base_top=130)
                     st.plotly_chart(fup, use_container_width=True, config={"displayModeBar": False})
                 else:
-                    st.info("선택한 키워드 중 ‘상승세’로 분류된 항목이 없습니다.")
+                    st.info("선택한 키워드 중 ‘상승세’ 항목이 없습니다.")
 
             with vv:
                 if down_keys:
@@ -1951,9 +1902,10 @@ if all_years:
                     fdn = force_legend_top_padding(fdn, base_top=130)
                     st.plotly_chart(fdn, use_container_width=True, config={"displayModeBar": False})
                 else:
-                    st.info("선택한 키워드 중 ‘하락세’로 분류된 항목이 없습니다.")
+                    st.info("선택한 키워드 중 ‘하락세’ 항목이 없습니다.")
 else:
     st.info("연도 정보를 추출할 수 없어 트렌드를 표시할 수 없습니다.")
+
 
 
 
@@ -1962,6 +1914,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
