@@ -576,7 +576,7 @@ def sample_sentences_for_keyword(df_in: pd.DataFrame, kw: str, text_cols: list[s
 
 # ================= KeyBERT 준비/키워드 추출 유틸 =================
 @st.cache_resource(show_spinner=False)
-def get_keybert(model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
+def get_keybert(model_name: str = "intfloat/multilingual-e5-large"):
     """
     - 한국어/영문 모두 안정적인 멀티링구얼 경량 모델.
     - 최초 1회 다운로드 후 캐시됨.
@@ -588,6 +588,26 @@ def get_keybert(model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
         return KeyBERT(model=emb)
     except Exception as e:
         return None  # 환경 제한 시 폴백 사용
+
+from kiwipiepy import Kiwi
+kiwi = Kiwi()
+
+def extract_nouns_korean(text: str) -> str:
+    """
+    문장에서 명사(NNG, NNP)와 고유명사, 복합명사 후보만 남김.
+    조사, 동사, 형용사, 부사 등 제거.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    nouns = []
+    for token in kiwi.tokenize(text):
+        pos = token.tag
+        if pos in ("NNG", "NNP"):  # 일반명사, 고유명사
+            nouns.append(token.form)
+        elif pos == "SL":  # 외래어(영문)
+            nouns.append(token.form)
+    return " ".join(nouns)
+
 
 # ===== 강한 stop/필터 =====
 GENERIC_KO = {
@@ -613,11 +633,12 @@ def _normalize_token(t: str) -> str:
     return t
 
 def _is_valid_kw(t: str) -> bool:
-    if not t: return False
-    if len(t) < 2: return False
+    if not t or len(t) < 2: return False
     if re.fullmatch(r"\d+(\.\d+)?", t): return False
-    # 조사/어미로 끝나는 1음절/불용 조사 제거(느슨한 규칙)
-    if re.search(r"[은는이가을를의에는로과와도만]", t[-1]): return False
+    # 품사적 패턴 제거: '하다','적인','으로','하여' 등
+    if re.search(r"(하다|적인|으로|하며|하고|에서|되어|하고자|된다|시키다|있다|된다)$", t):
+        return False
+    if re.search(r"[은는이가을를의에는로과와도만]$", t): return False
     return (t.lower() not in STRONG_STOP)
 
 
@@ -1808,6 +1829,7 @@ elif mode == "ICT 유형 단일클래스":
         
            # 입력 문서
             docs = _docs_texts(sub_wb, text_cols)
+            docs = "\n".join(docs)
             
             # 🔹 문서 단위 후보 + 병합 기반 KeyBERT
             candidates = keybert_candidates_for_docs(
@@ -2610,6 +2632,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
