@@ -704,9 +704,7 @@ def keybert_candidates_for_docs(
     return cleaned[:top_n]
 
 
-d# ========= 대비형(contrastive) 재랭킹 유틸 =========
-import math
-from functools import lru_cache
+
 
 @st.cache_resource(show_spinner=False)
 def get_sbert(model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
@@ -2572,6 +2570,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
