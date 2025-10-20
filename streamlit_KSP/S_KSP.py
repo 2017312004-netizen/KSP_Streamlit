@@ -2479,6 +2479,13 @@ if st.sidebar.button("캐시 초기화", use_container_width=True):
             st.experimental_rerun()  # 구버전 백업
         except Exception:
             pass  # 최후의 보루: 리런 실패해도 앱은 계속 동작
+            
+with st.sidebar.expander("환경 점검", expanded=False):
+    import sys, importlib.util
+    st.write("Python:", sys.version)
+    for m in ["streamlit_folium", "folium", "wordcloud", "plotly", "kiwipiepy", "sentence_transformers", "keybert"]:
+        st.write(f"{m}: ", importlib.util.find_spec(m) is not None)
+
 
 
 # ====================== 사용자 불용어 (코드에서 직접 편집) ======================
@@ -2643,6 +2650,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
