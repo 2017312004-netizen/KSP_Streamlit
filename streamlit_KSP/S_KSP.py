@@ -156,7 +156,7 @@ STOP = {
     "핵심", "수동", "지연", "그리고", "또한", "보고서입니다", "겪고", "인해", "현재", "다니는", "다룬다", "중심으로", "가능한", "한다", "위치", "부문의", "가장", "온두라스의", "운영을", "센터", "특히", "참여를", "등록", "초점을", "지원을", "제시했습니다", "행정의",
     "접근성을", "발생하는", "수립합니다", "제시합니다", "성공적인", "효율적인", "전환을", "대응", "자문을", "합니다", "기술을", "서비스에", "등의", "주요", "분절된", "시스템은", "기능이", "세르비아의", "방글라데시의", "강화하기", "체계적인", "문제를", "지원합니다", "높이는", "기본", "단지의", "산업의",
     "미흡한", "시스템이", "비롯한", "다각화와", "타지키스탄은", "타지키스탄의", "정보", "이에", "따라", "실정입니다", "데이터의", "데이터를", "공유하고", "것입니다", "궁극적으로", "기여할", "정확성을", "자동화하여", "수립의", "공유를", "융합하여", "부문을", "지속", "달성하도록", "성장을", "돕는", "산업과",
-    "경제에서", "경제로", "전환하고자", "그러나" ,"부문은", "부족으로", "잠재력을", "충분히", "활용하지", "못하고", "호주는", "호주의", "분야에서", "인도네시아는", "문제점을", "효율성을", "겻으로"
+    "경제에서", "경제로", "전환하고자", "그러나" ,"부문은", "부족으로", "잠재력을", "충분히", "활용하지", "못하고", "호주는", "호주의", "분야에서", "인도네시아는", "문제점을", "효율성을", "겻으로", "지역의", "벤치마킹하여", "절"
 }
 STOP_LOW = {w.lower() for w in STOP}
 
@@ -181,6 +181,41 @@ DEFAULT_DATA_PATH = r"df1_20250901_145328.xlsx"
 # 스크립트 기준 디렉토리(노트북/REPL 대비 fallback)
 DATA_DIR = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
 SEARCH_DIRS = [DATA_DIR, DATA_DIR / "data", DATA_DIR / "assets"]
+
+# --- Safe column selector (교집합 + 동의어 + 폴백) ---
+ALT_NAMES = {
+    "사업 기간": ["사업기간", "기간", "Project Period", "Years", "Year", "year"],
+    "요약": ["요약문", "내용 요약"],
+    "주요 내용": ["본문", "내용"],
+    "Hashtag_str": ["Hashtag", "해시태그", "해시태그_문자열"],
+    "대상기관": ["기관", "기관명"],
+    "지원기관": ["지원 기관"],
+    "ICT 유형": ["ICT유형"],
+    "주제분류(대)": ["주제(대)", "주제 대분류"],
+    "파일명": ["Filename", "파일 이름"],
+    "대상국": ["Country"],
+}
+
+def pick_existing_columns(df: pd.DataFrame, preferred: list[str], fallback_max: int = 8) -> list[str]:
+    """preferred 우선 → ALT_NAMES로 대체 → 그래도 부족하면 앞 n개 임의 폴백"""
+    existing = [c for c in preferred if c in df.columns]
+    wanted = set(preferred)
+
+    # 필요한데 빠진 것들에 대해 동의어 시도
+    for col in preferred:
+        if col in existing:
+            continue
+        for alt in ALT_NAMES.get(col, []):
+            if alt in df.columns and alt not in existing and alt not in wanted:
+                existing.append(alt)
+                break
+
+    # 그래도 하나도 없으면 앞에서 몇 개 폴백
+    if not existing:
+        existing = list(df.columns[:fallback_max])
+
+    return existing
+
 
 def ensure_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
     cols = pd.Series(df.columns)
@@ -1160,8 +1195,11 @@ if mode == "국가별 총계":
 
             with tab_table:
                 st.markdown("#### 프로젝트 목록")
-                cols_show = ["파일명","지원기관","사업 기간","주제분류(대)", "ICT 유형","주요 내용","기대 효과","Hashtag_str"]
-                st.dataframe(sub[cols_show].drop_duplicates().reset_index(drop=True), use_container_width=True)
+                cols_pref = ["파일명","지원기관","사업 기간","주제분류(대)","ICT 유형","주요 내용","기대 효과","Hashtag_str","대상기관","대상국"]
+                cols_use  = pick_existing_columns(sub, cols_pref, fallback_max=10)
+                st.caption(f"표시 컬럼: {', '.join(cols_use)}")
+                st.dataframe(sub[cols_use].drop_duplicates().reset_index(drop=True), use_container_width=True)
+
     else:
         st.info("상단 지도에서 국가를 클릭하면 상세가 열립니다.")
 
@@ -1308,8 +1346,11 @@ elif mode == "ICT 유형 단일클래스":
     # ---- (4) 테이블: 클래스 전체 보고서 목록 ----
     with tab_table:
         st.markdown("#### 프로젝트 목록 (클래스 전체)")
-        cols_show = ["파일명","지원기관","사업 기간","주제분류(대)","ICT 유형","대상국","대상기관","주요 내용","기대 효과","Hashtag_str"]
-        st.dataframe(sub_wb[cols_show].drop_duplicates().reset_index(drop=True), use_container_width=True)
+        cols_pref = ["파일명","지원기관","사업 기간","주제분류(대)","ICT 유형","대상국","대상기관","주요 내용","기대 효과","Hashtag_str"]
+        cols_use  = pick_existing_columns(sub_wb, cols_pref, fallback_max=12)
+        st.caption(f"표시 컬럼: {', '.join(cols_use)}")
+        st.dataframe(sub_wb[cols_use].drop_duplicates().reset_index(drop=True), use_container_width=True)
+
 
 
 
@@ -2029,6 +2070,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
