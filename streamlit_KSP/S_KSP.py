@@ -1468,19 +1468,63 @@ def norm_token(x: str) -> str:
     x = re.sub(r"[\"'’“”()\[\]{}<>]", "", x.strip()); xl = x.lower()
     return SYN.get(xl, x)
 
+import ast
+
+def _clean_token(x: str) -> str:
+    # 따옴표/대괄호/괄호류 제거 + 공백 정리 + 동의어 매핑
+    x = re.sub(r"[\"'’“”()\[\]{}<>]", "", str(x).strip())
+    x = re.sub(r"\s{2,}", " ", x)
+    xl = x.lower()
+    return SYN.get(xl, x)
+
 def split_hashtags(s, stopset):
-    if not isinstance(s,str) or not s.strip(): return []
-    raw = re.split(r"[,\;/]| {2,}", s)
-    out=[]
-    for t in raw:
-        t = norm_token(t)
+    """
+    해시태그 셀 하나를 -> 토큰 리스트로.
+    - "['조달','전자조달']" 같은 리스트 문자열은 literal_eval로 파싱
+    - 실패하면 일반 구분기호(,;/ 공백2+)로 분할
+    - 국가/숫자/불용어/잡문자 제거
+    """
+    if not isinstance(s, str) or not s.strip():
+        return []
+
+    items = []
+    txt = s.strip()
+
+    # 1) 리스트 문자열이면 안전 파싱
+    if txt.startswith("[") and txt.endswith("]"):
+        try:
+            arr = ast.literal_eval(txt)
+            if isinstance(arr, (list, tuple)):
+                items = [str(z) for z in arr]
+        except Exception:
+            items = []  # 파싱 실패하면 아래 fallback로 이어감
+
+    # 2) fallback: 일반 분할
+    if not items:
+        items = re.split(r"[,\;/]| {2,}", txt)
+
+    out = []
+    for t in items:
+        t = _clean_token(t)
         core = re.sub(r"\s+", "", t.lower())
-        if not core or re.fullmatch(r"[\W_]+", core) or re.fullmatch(r"\d+(\.\d+)?", core):
+        if not core or len(core) < 2:
             continue
-        if len(core) < 2: continue
-        if core in stopset: continue
+        if re.fullmatch(r"[\W_]+", core) or re.fullmatch(r"\d+(\.\d+)?", core):
+            continue
+        if core in stopset:
+            continue
         out.append(t)
-    return sorted(set(out), key=str.lower)
+
+    # 중복 제거(대소문자 무시)
+    seen = set()
+    dedup = []
+    for w in out:
+        k = w.lower()
+        if k not in seen:
+            seen.add(k)
+            dedup.append(w)
+    return dedup
+
 
 def jeffreys_rolling_ratio(num, den, k=ROLL, alpha=ALPHA):
     numr = (num + alpha).rolling(k, center=True, min_periods=1).sum()
@@ -1489,59 +1533,45 @@ def jeffreys_rolling_ratio(num, den, k=ROLL, alpha=ALPHA):
 
 @st.cache_data(show_spinner=False)
 def build_keyword_time(df_in: pd.DataFrame, stop_extra: set):
-    """
-    기존 '사업 기간' 의존 제거 → _year_text_series 사용.
-    나머지 로직은 그대로.
-    """
-    df_local = df_in.copy()
+    df_local = df_in.loc[:, ~df_in.columns.duplicated()].copy()
 
-    # 해시태그 컬럼 정규화
-    ht_col = "Hashtag" if "Hashtag" in df_local.columns else ("Hashtag_str" if "Hashtag_str" in df_local.columns else None)
-    if ht_col:
-        df_local[ht_col] = df_local[ht_col].astype(str).str.strip()
-    else:
-        df_local[ht_col] = ""
-
-    # 연도 리스트
-    years_list = _year_text_series(df_local).apply(years_from_span).tolist()
-    all_years  = sorted({y for ys in years_list for y in (ys or [])})
+    # 연도 소스: 지정/자동(요약·내용 포함) → 리스트로 확장
+    ser_year = _year_text_series(df_local)
+    years_list = ser_year.apply(years_from_span)
+    all_years = sorted({y for ys in years_list for y in (ys or [])})
     if not all_years:
         return [], {}, pd.Series([], dtype=int), pd.DataFrame()
 
-    # 동적 불용어(대분류/클래스/국가/기관 등)
+    # 동적 불용어(대분류/클래스/국가 등)
     dyn = set()
-    for col in ["주제분류(대)","ICT 유형","대상국","대상기관","지원기관"]:
+    for col in ["주제분류(대)", "ICT 유형", "대상국", "대상기관", "지원기관"]:
         if col in df_local.columns:
-            dyn |= set(map(str.lower, df_local[col].astype(str).unique()))
-    stopset = {w.lower() for w in stop_extra} | dyn | STOP_LOW_ALL
+            dyn |= {str(v).strip().lower() for v in df_local[col].dropna().unique()}
+    stopset = {w.lower() for w in stop_extra} | dyn
 
-    def _split_hashtags(s):
-        toks = []
-        for t in re.split(r"[,\;/]| {2,}", s or ""):
-            t = re.sub(r"^[\"'“”‘’]+|[\"'“”‘’]+$", "", t.strip())  # 양끝 따옴표 제거
-            core = re.sub(r"\s+", "", t.lower())
-            if not core or len(core) < 2:
-                continue
-            if core in stopset or re.fullmatch(r"\d+(\.\d+)?", core):
-                continue
-            toks.append(t)
-        return sorted(set(toks), key=str.lower)
+    # 해시태그 토큰 (리스트 문자열 포함 안전 파싱)
+    HASHTAG_COL = "Hashtag" if "Hashtag" in df_local.columns else ("Hashtag_str" if "Hashtag_str" in df_local.columns else None)
+    if HASHTAG_COL:
+        tokens_by_row = [split_hashtags(s, stopset) for s in df_local[HASHTAG_COL].fillna("").astype(str)]
+    else:
+        tokens_by_row = [[] for _ in range(len(df_local))]
 
-    tokens_by_row = [ _split_hashtags(s) for s in df_local[ht_col] ]
-
-    # 연도별 문서수
+    # 연도별 총 문서 수
     docs_per_year = pd.Series(0, index=all_years, dtype=int)
     for ys in years_list:
-        for y in (ys or []): docs_per_year[y] += 1
+        for y in (ys or []):
+            docs_per_year[y] += 1
 
-    # 연도×키워드 등장 문서수
+    # 연도별 키워드 등장 수(문서 단위 중복 제거)
     kw_doc = {y: Counter() for y in all_years}
-    for ys, toks in zip(years_list, tokens_by_row):
-        if not ys or not toks: continue
+    for toks, ys in zip(tokens_by_row, years_list):
+        if not ys or not toks:
+            continue
         for y in ys:
-            kw_doc[y].update(toks)
+            kw_doc[y].update(set(toks))
 
     return all_years, kw_doc, docs_per_year, df_local
+
 
 
 all_years, kw_doc, docs_per_year, _ = build_keyword_time(df, STOP | BASE_STOP)
@@ -1984,6 +2014,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
