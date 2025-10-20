@@ -703,7 +703,16 @@ def keybert_candidates_for_docs(
     cleaned.sort(key=lambda x: x[1], reverse=True)
     return cleaned[:top_n]
 
-
+def _docs_texts(df_in: pd.DataFrame, text_cols: List[str]) -> List[str]:
+    cols = [c for c in (text_cols or []) if c in df_in.columns]
+    if not cols:
+        return []
+    out = []
+    for _, r in df_in.iterrows():
+        blob = " ".join(str(r.get(c, "") or "") for c in cols).strip()
+        if blob:
+            out.append(blob)
+    return out
 
 
 @st.cache_resource(show_spinner=False)
@@ -1770,7 +1779,9 @@ elif mode == "ICT 유형 단일클래스":
                 # 필요 시 텍스트 컬럼 바꾸기
                 text_cols   = st.multiselect("검색할 텍스트 컬럼", options=pref_cols, default=text_cols)
         
-            
+            # (3) 입력 문서 만들기(해당 ICT 유형 텍스트)
+            docs = _docs_texts(sub_wb, text_cols)
+
             
             # ① KeyBERT 후보
             candidates = keybert_candidates_for_docs(
@@ -2568,6 +2579,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
