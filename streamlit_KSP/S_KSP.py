@@ -699,6 +699,37 @@ def extract_iso_from_stfolium(ret: dict):
     return None
 
 # --------------------- 연도 파서 ---------------------
+# === KEEP ONLY THIS ===
+YEAR_RE = re.compile(r"(?:19|20)\d{2}")
+
+def years_from_span(text):
+    """
+    '2025-2026' → [2025,2026], '2025' → [2025]
+    숫자(정수/실수)도 허용. 범위가 뒤집혀도 정상화.
+    """
+    if pd.isna(text):
+        return []
+
+    if isinstance(text, (int, np.integer, float, np.floating)):
+        y = int(text)
+        return [y] if 1990 <= y <= 2035 else []
+
+    t = str(text)
+    t = t.replace("~", "-").replace("–", "-").replace("—", "-")
+    t = re.sub(r"[()]", " ", t)
+
+    years = [int(y) for y in YEAR_RE.findall(t)]
+    years = [y for y in years if 1990 <= y <= 2035]
+
+    # 범위 확장
+    for a, b in re.findall(r"((?:19|20)\d{2})\s*-\s*((?:19|20)\d{2})", t):
+        a, b = int(a), int(b)
+        lo, hi = min(a, b), max(a, b)
+        years.extend(range(lo, hi + 1))
+
+    years = sorted(set(years))
+    return years
+
 @st.cache_data(show_spinner=False)
 def expand_years(df_in: pd.DataFrame) -> pd.DataFrame:
     """
@@ -1361,36 +1392,7 @@ HASHTAG_COL = "Hashtag" if "Hashtag" in df.columns else ("Hashtag_str" if "Hasht
 
 def clean(s): return s.astype(str).str.replace(r"\s+"," ",regex=True).str.strip()
 
-# === KEEP ONLY THIS ===
-YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 
-def years_from_span(text):
-    """
-    '2025-2026' → [2025,2026], '2025' → [2025]
-    숫자(정수/실수)도 허용. 범위가 뒤집혀도 정상화.
-    """
-    if pd.isna(text):
-        return []
-
-    if isinstance(text, (int, np.integer, float, np.floating)):
-        y = int(text)
-        return [y] if 1990 <= y <= 2035 else []
-
-    t = str(text)
-    t = t.replace("~", "-").replace("–", "-").replace("—", "-")
-    t = re.sub(r"[()]", " ", t)
-
-    years = [int(y) for y in YEAR_RE.findall(t)]
-    years = [y for y in years if 1990 <= y <= 2035]
-
-    # 범위 확장
-    for a, b in re.findall(r"((?:19|20)\d{2})\s*-\s*((?:19|20)\d{2})", t):
-        a, b = int(a), int(b)
-        lo, hi = min(a, b), max(a, b)
-        years.extend(range(lo, hi + 1))
-
-    years = sorted(set(years))
-    return years
 
 
 SYN = {"sme":"SME","pki":"PKI","ai":"AI","ict":"ICT","bigdata":"빅데이터","big data":"빅데이터",
@@ -1814,6 +1816,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
