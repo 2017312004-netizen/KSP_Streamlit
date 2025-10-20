@@ -156,7 +156,7 @@ STOP = {
     "핵심", "수동", "지연", "그리고", "또한", "보고서입니다", "겪고", "인해", "현재", "다니는", "다룬다", "중심으로", "가능한", "한다", "위치", "부문의", "가장", "온두라스의", "운영을", "센터", "특히", "참여를", "등록", "초점을", "지원을", "제시했습니다", "행정의",
     "접근성을", "발생하는", "수립합니다", "제시합니다", "성공적인", "효율적인", "전환을", "대응", "자문을", "합니다", "기술을", "서비스에", "등의", "주요", "분절된", "시스템은", "기능이", "세르비아의", "방글라데시의", "강화하기", "체계적인", "문제를", "지원합니다", "높이는", "기본", "단지의", "산업의",
     "미흡한", "시스템이", "비롯한", "다각화와", "타지키스탄은", "타지키스탄의", "정보", "이에", "따라", "실정입니다", "데이터의", "데이터를", "공유하고", "것입니다", "궁극적으로", "기여할", "정확성을", "자동화하여", "수립의", "공유를", "융합하여", "부문을", "지속", "달성하도록", "성장을", "돕는", "산업과",
-    "경제에서", "경제로", "전환하고자", "그러나" ,"부문은", "부족으로", "잠재력을", "충분히", "활용하지", "못하고", "호주는", "호주의", "분야에서", "인도네시아는", "문제점을", "효율성을"
+    "경제에서", "경제로", "전환하고자", "그러나" ,"부문은", "부족으로", "잠재력을", "충분히", "활용하지", "못하고", "호주는", "호주의", "분야에서", "인도네시아는", "문제점을", "효율성을", "겻으로"
 }
 STOP_LOW = {w.lower() for w in STOP}
 
@@ -1868,57 +1868,35 @@ if st.sidebar.button("캐시 초기화", use_container_width=True):
 
 
 # ====================== 사용자 불용어 (코드에서 직접 편집) ======================
-STOP_CUSTOM = {"높여","기관별","지속가능한","공무원의","있음","사용자"}
-STOP_CUSTOM_REGEX = []  # 필요시 패턴 추가
+# ====================== 사용자 불용어 ======================
+STOP_CUSTOM = {"높여", "기관별", "지속가능한", "공무원의", "있음", "사용자"}
 
-STOP_LOW_ALL = (
-    {w.upper() for w in STOP} |
-    {w.upper() for w in STOP_CUSTOM} |
-    {w.upper() for w in globals().get("BASE_STOP", set())}
-)
+# 전처리용 (대문자화 + 공백제거)
+STOP_SET = {w.strip().upper() for w in STOP_CUSTOM if w.strip()}
 
-def _blocked_by_regex(tok: str) -> bool:
-    if not STOP_CUSTOM_REGEX:
-        return False
-    up = str(tok).upper()
-    import re as _re
-    return any(_re.search(p, up) for p in STOP_CUSTOM_REGEX)
-
-
-
-    
-# 동의어 사전 키를 대문자로, 값도 대문자로 맞춤
-SYN_UP = {k.upper(): (v.upper() if isinstance(v, str) else v) for k, v in SYN.items()}
-
+# -----------------------------------------------------------
 def _norm_token(x: str) -> str:
     x = re.sub(r"[\"'’“”()\[\]{}<>]", "", str(x).strip())
-    xu = x.upper()                 # ← 모두 대문자
-    return SYN_UP.get(xu, xu)      # ← 치환 결과도 대문자
-
-
-
-
+    return x.upper()  # 일관되게 대문자만 남김
 
 def _is_numericish(s: str) -> bool:
     return bool(re.fullmatch(r"\d+(\.\d+)?", s))
 
-# --- 1) 후보 풀 만들기: 해시태그 전체 수집 + 전처리 ---
-HASHTAG_COL = "Hashtag" if "Hashtag" in df.columns else ("Hashtag_str" if "Hashtag_str" in df.columns else None)
-
 def collect_hashtag_freq(df_in: pd.DataFrame) -> Counter:
     freq = Counter()
-    if not HASHTAG_COL or df_in[HASHTAG_COL].isna().all():
+    col = "Hashtag" if "Hashtag" in df_in.columns else "Hashtag_str"
+    if col not in df_in.columns:
         return freq
-    for raw in df_in[HASHTAG_COL].dropna().astype(str):
+    for raw in df_in[col].dropna().astype(str):
         for t in re.split(r"[,\;/]| {2,}", raw):
-            t = _norm_token(t.strip())      # 이미 대문자화됨
-            core = re.sub(r"\s+", "", t)    # 대문자 상태 유지
-            if not core or len(core) < 2:
+            t = _norm_token(t)
+            if not t or len(t) < 2:
                 continue
-            if core in STOP_LOW_ALL or _is_numericish(core) or _blocked_by_regex(core):
+            if t in STOP_SET or _is_numericish(t):
                 continue
             freq[t] += 1
     return freq
+
 
 # --- 2) 제외 집합: 국가/지역 + 자동(AI) 키워드 ---
 COUNTRY_WORDS = set()
@@ -1947,47 +1925,16 @@ def is_excluded_token(tok: str) -> bool:
 
 
 
-freq_all = collect_hashtag_freq(df)
-# 후보 정리(국가/AI/불용어 제외)
-# 교체 후:
-# 후보 생성
-candidates_all = [(k, c) for k, c in freq_all.items() if not is_excluded_token(k)]
+# 국가·AI 키워드 제외
+COUNTRY_WORDS = {v.upper() for trip in COUNTRY_MAP.values() for v in trip}
+AI_SET = {t.upper() for t in (rise_sel + fall_sel)} if "rise_sel" in globals() else set()
 
-# ---- 후보가 적을 때 완화 보충 ----
-if len(candidates_all) < 25 and HASHTAG_COL:
-    tmp = Counter()
-    for raw in df[HASHTAG_COL].dropna().astype(str):
-        for t in re.split(r"[,\;/]| {2,}", raw):
-            t = _norm_token(t.strip())       # 이미 대문자
-            core = re.sub(r"\s+", "", t)     # 대문자 상태 유지
-            if (
-                t
-                and (core not in COUNTRY_WORDS)
-                and (core not in AI_SET)
-                and (core not in STOP_LOW_ALL)      # ← ★ 누락됐던 부분 추가
-                and (not _is_numericish(core))
-                and (not _blocked_by_regex(core))
-            ):
-                tmp[t] += 1
+def is_excluded(tok):
+    t = tok.upper().strip()
+    return (t in COUNTRY_WORDS) or (t in AI_SET) or (t in STOP_SET) or _is_numericish(t)
 
-    for k, v in tmp.items():
-        freq_all[k] = max(freq_all.get(k, 0), v)
-
-    # 최종 후보 재계산에도 STOP 필터 포함
-    candidates_all = [
-        (k, c) for k, c in freq_all.items()
-        if (k not in COUNTRY_WORDS)
-           and (k not in AI_SET)
-           and (k not in STOP_LOW_ALL)        # ← ★ 추가
-           and (not _is_numericish(k))
-           and (not _blocked_by_regex(k))
-    ]
-
-
-
-
-# 상위 300개만 노출
-candidates_all = sorted(candidates_all, key=lambda x: (-x[1], x[0].lower()))[:300]
+candidates_all = [(k, c) for k, c in freq_all.items() if not is_excluded(k)]
+candidates_all = sorted(candidates_all, key=lambda x: (-x[1], x[0]))[:300]
 cand_labels = [k for k,_ in candidates_all]
 
 # --- 3) 체크박스 그리드 UI(검색 없음) ---
@@ -2078,6 +2025,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
