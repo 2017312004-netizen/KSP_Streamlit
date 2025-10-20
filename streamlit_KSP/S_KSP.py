@@ -402,103 +402,74 @@ with st.expander("데이터 미리보기 / 진단", expanded=False):
 # ========================= 전역 컬러 팔레트 =========================
 
 
+# ---------- 1) df 로드 이후 ----------
+# 반드시 df가 이미 로드된 뒤 실행!
+WB_ORDER   = [str(v).strip() for v in df["ICT 유형"].fillna("미분류").astype(str).unique().tolist()]
+SUBJ_ORDER = [str(v).strip() for v in df["주제분류(대)"].fillna("미분류").astype(str).unique().tolist()]
+
+# ---------- 2) 기본 팔레트 ----------
+_BASE_QUALS = (
+    px.colors.qualitative.Set1
+    + px.colors.qualitative.Set2
+    + px.colors.qualitative.Set3
+    + px.colors.qualitative.Dark24
+    + px.colors.qualitative.Bold
+    + px.colors.qualitative.Vivid
+)
+
+# ---------- 3) 색 파싱/보정 ----------
 def _parse_color_to_rgb01(c: str) -> Optional[Tuple[float, float, float]]:
-    """
-    다양한 표현의 색을 0..1 RGB로 파싱:
-    - '#rrggbb' / '#rgb'
-    - 'rgb(r,g,b)' / 'rgba(r,g,b,a)'
-    - (가능하면) named color -> matplotlib.colors.to_rgb
-    실패하면 None
-    """
     if not isinstance(c, str):
         return None
     s = c.strip()
-
-    # HEX: #rgb 또는 #rrggbb
     if s.startswith("#"):
         h = s[1:]
-        if len(h) == 3:
-            h = "".join(ch * 2 for ch in h)
-        if len(h) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in h):
-            r = int(h[0:2], 16) / 255.0
-            g = int(h[2:4], 16) / 255.0
-            b = int(h[4:6], 16) / 255.0
-            return (r, g, b)
-        return None
-
-    # rgb()/rgba()
+        if len(h) == 3: h = "".join(ch*2 for ch in h)
+        if len(h) == 6:
+            try:
+                r = int(h[0:2], 16)/255; g = int(h[2:4], 16)/255; b = int(h[4:6], 16)/255
+                return (r,g,b)
+            except Exception: return None
     if s.lower().startswith("rgb"):
         nums = re.findall(r"[\d\.]+", s)
-        if len(nums) >= 3:
-            r, g, b = [float(nums[i]) for i in range(3)]
-            # 0..255 또는 0..1 둘 다 허용
-            if max(r, g, b) > 1.0:
-                r, g, b = r/255.0, g/255.0, b/255.0
-            return (max(0,min(1,r)), max(0,min(1,g)), max(0,min(1,b)))
-
-    # 이름 색상 등 (가능하면 matplotlib)
+        if len(nums)>=3:
+            r,g,b = [float(x) for x in nums[:3]]
+            if max(r,g,b)>1: r,g,b = r/255,g/255,b/255
+            return (r,g,b)
     try:
         from matplotlib.colors import to_rgb
-        r, g, b = to_rgb(s)  # 이미 0..1
-        return (r, g, b)
+        return to_rgb(s)
     except Exception:
         return None
 
-def _to_hex_from_rgb01(rgb: Tuple[float, float, float]) -> str:
-    r, g, b = [int(max(0, min(1, v)) * 255 + 0.5) for v in rgb]
+def _to_hex_from_rgb01(rgb):
+    r,g,b=[int(max(0,min(1,v))*255+0.5) for v in rgb]
     return f"#{r:02x}{g:02x}{b:02x}"
 
-def _brighten_color(c: str, s_scale=1.35, l_shift=-0.05) -> str:
-    """
-    색을 HLS 공간에서 선명하게 보정.
-    - s_scale: 채도 배수 (1.1~1.5 권장)
-    - l_shift: 명도 가감 (-0.08~+0.08 권장)
-    파싱 실패 시 원본 색상 그대로 반환.
-    """
+def _brighten_color(c: str, s_scale=1.3, l_shift=-0.05) -> str:
     rgb = _parse_color_to_rgb01(c)
-    if rgb is None:
-        return c  # 원본 유지(에러 방지)
+    if rgb is None: return c
+    h,l,s = colorsys.rgb_to_hls(*rgb)
+    s = min(1, s*s_scale); l = min(1, max(0, l+l_shift))
+    r2,g2,b2 = colorsys.hls_to_rgb(h,l,s)
+    return _to_hex_from_rgb01((r2,g2,b2))
 
-    h, l, s = colorsys.rgb_to_hls(*rgb)
-    s = min(1.0, s * s_scale)
-    l = min(1.0, max(0.0, l + l_shift))
-    r2, g2, b2 = colorsys.hls_to_rgb(h, l, s)
-    return _to_hex_from_rgb01((r2, g2, b2))
-
-def make_color_map(names, base_colors=None, s_scale=1.35, l_shift=-0.05):
-    """
-    names: 카테고리 이름 리스트
-    base_colors: None이면 전역 _BASE_QUALS를 사용.
-                 _BASE_QUALS가 없거나 비어도 안전하게 기본 팔레트로 대체.
-    """
-    # 1) 베이스 팔레트 확보(안전)
+# ---------- 4) 컬러 맵 ----------
+def make_color_map(names, base_colors=None, s_scale=1.3, l_shift=-0.05):
     if base_colors is None:
-        try:
-            base_colors = _BASE_QUALS
-        except NameError:
-            base_colors = None
-    if not base_colors:  # None or 빈 리스트면 안전한 기본 팔레트로 대체
+        base_colors = _BASE_QUALS
+    if not base_colors:
         import plotly.express as px
-        base_colors = (
-            px.colors.qualitative.Set1
-            + px.colors.qualitative.Set2
-            + px.colors.qualitative.Set3
-            + px.colors.qualitative.Dark24
-            + px.colors.qualitative.Bold
-            + px.colors.qualitative.Vivid
-        )
-
-    # 2) 순환 매핑
-    import itertools
-    cycle = itertools.cycle(base_colors)
+        base_colors = px.colors.qualitative.Plotly
     cmap = {}
+    cycle = itertools.cycle(base_colors)
     for n in names:
         if n not in cmap:
             raw = next(cycle)
             cmap[n] = _brighten_color(raw, s_scale=s_scale, l_shift=l_shift)
     return cmap
 
-# 재생성 (이 줄은 _BASE_QUALS 정의가 끝난 이후에 두는 것이 가장 깔끔)
+# ---------- 5) 최종 생성 ----------
 COLOR_WB   = make_color_map(WB_ORDER)
 COLOR_SUBJ = make_color_map(SUBJ_ORDER)
 
@@ -2330,6 +2301,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
