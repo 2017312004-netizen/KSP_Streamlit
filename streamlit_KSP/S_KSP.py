@@ -1818,41 +1818,109 @@ if all_years:
         if _maybe in globals() and isinstance(globals()[_maybe], (list, set, tuple)):
             ai_keys |= set(globals()[_maybe])
 
-    # 1) 원본 데이터(df)에서 Hashtag_str 컬럼을 기반으로 전체 후보 재구성
+        # 1) 원본 데이터(df)에서 해시태그 전체 후보 재구성 (정규화 + 불용어 + 동의어)
     tag_col = None
     for c in df.columns:
-        if "Hashtag_str" in c or "Hashtag" == c:
+        if c == "Hashtag_str" or c == "Hashtag":
             tag_col = c
             break
 
     if tag_col is None:
         st.warning("해시태그 컬럼을 찾을 수 없습니다.")
     else:
-        # 전체 해시태그 텍스트 병합 후 토큰 분리
-        all_tags = []
+        # (a) 정규화 유틸
+        SYN_MAP = {
+            "sme":"중소기업","pki":"PKI","ai":"AI","ict":"ICT",
+            "bigdata":"빅데이터","big data":"빅데이터","data center":"데이터센터",
+            "cloud":"클라우드","e-gp":"전자조달","egp":"전자조달",
+            "e-procurement":"전자조달","ifmis":"IFMIS","bim":"BIM",
+            "e-invoice":"전자무역·e-Invoice","e invoice":"전자무역·e-Invoice",
+        }
+
+        def normalize_token(raw: str) -> str | None:
+            if not isinstance(raw, str):
+                return None
+            t = raw.strip()
+
+            # 대괄호/따옴표/샾/괄호 제거
+            t = re.sub(r"^[\[\(\{]+|[\]\)\}]+$", "", t)         # 양끝 괄호류
+            t = t.strip().strip("'\"`“”’‘").strip()              # 따옴표류
+            t = t.lstrip("#").strip()                            # 해시태그 # 제거
+            t = re.sub(r"\s+", " ", t)                           # 다중 공백 정리
+
+            # 리스트 문자열 형태: "['조달','조세']" 같은 경우 안전하게 토큰화
+            # → 이 함수는 단일 토큰용이므로 여기선 단일 항목만 남겨 사용
+            t = t.replace("',", ",").replace("’,", ",").strip()
+            t = t.replace("[", "").replace("]", "")
+
+            if not t or len(t) < 2:
+                return None
+            if re.fullmatch(r"\d+(\.\d+)?", t):                  # 숫자만
+                return None
+
+            low = t.lower()
+            # 동의어/표기 변형 통일
+            t_std = SYN_MAP.get(low, t)
+
+            # 불용어 필터 (기존 STOP + BASE_STOP + 동적 불용어)
+            dyn = set()
+            for col in ["주제분류(대)", "ICT 유형", "대상국", "대상기관", "지원기관"]:
+                if col in df.columns:
+                    dyn |= set(map(str.lower, df[col].astype(str).unique()))
+
+            stop_all = STOP_LOW | BASE_STOP_LOW | dyn
+            if low in stop_all or t_std.lower() in stop_all:
+                return None
+
+            return t_std.strip()
+
+        # (b) 전체 해시태그에서 후보 만들기 (분리자 다양화 + 정규화)
+        bucket: dict[str, int] = {}
+        def bump(tok: str):
+            if not tok:
+                return
+            bucket[tok] = bucket.get(tok, 0) + 1
+
         for s in df[tag_col].fillna("").astype(str):
-            tokens = re.split(r"[,\;/]", s)
-            for t in tokens:
-                t = t.strip()
-                if not t or len(t) < 2:
+            # 흔한 구분자 + 리스트 문자열 흔적까지 포괄
+            parts = re.split(r"[,\;/|]| {2,}", s.replace("'", " ").replace("`", " ").replace("\"", " "))
+            for p in parts:
+                p = p.strip()
+                if not p:
                     continue
-                all_tags.append(t)
+                tok = normalize_token(p)
+                if tok:
+                    bump(tok)
 
-        # 정제: 소문자화, 중복 제거, AI 키워드 제거
-        all_tags = sorted(set(map(str.strip, all_tags)))
-        all_tags = [t for t in all_tags if t not in ai_keys]
+        # (c) AI 자동 키워드 완전 배제
+        ai_keys = set()
+        for _maybe in ["rise_sel", "fall_sel"]:
+            if _maybe in globals() and isinstance(globals()[_maybe], (list, set, tuple)):
+                ai_keys |= set(globals()[_maybe])
+        for k in list(bucket.keys()):
+            if k in ai_keys:
+                bucket.pop(k, None)
 
-        # 상위 빈도(최대 300개까지만)
-        tag_freq = pd.Series(all_tags).value_counts()
-        candidates = tag_freq.index[:300].tolist()
+        # (d) 근사중복 정리: 대소문자/공백/하이픈 차이 통합
+        canon_map: dict[str, str] = {}   # canon -> 대표표기
+        merged: dict[str, int] = {}
+        for k, v in bucket.items():
+            canon = re.sub(r"[\s\-\_]+", "", k).lower()
+            rep = canon_map.get(canon, k)              # 첫 등장 표기를 대표로
+            canon_map[canon] = rep
+            merged[rep] = merged.get(rep, 0) + v
 
-        st.caption("AI 자동 키워드는 후보에서 제외되었습니다. 직접 2~30개를 선택하세요.")
+        # (e) 빈도순 상위 N (너무 길면 UI가 무거워지므로 top 300)
+        candidates = [k for k, _ in sorted(merged.items(), key=lambda x: (-x[1], x[0]))][:300]
+
+        st.caption("전처리/불용어/동의어 통합을 적용했습니다. (AI 자동 키워드는 후보에서 제외)")
         selected_tokens = st.multiselect(
             "전체 해시태그 후보 (검색 없음)",
             options=candidates,
             default=[],
-            help="AI 추출 키워드와 무관하게, 원본 데이터의 해시태그를 기준으로 직접 선택합니다."
+            help="원본 해시태그(정규화됨)에서 직접 2~30개 선택하세요."
         )
+
 
         equalize = st.checkbox("상승/하락 그래프의 키워드 개수를 동일하게 맞추기", value=True)
 
@@ -1919,6 +1987,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
