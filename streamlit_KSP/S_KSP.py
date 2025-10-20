@@ -516,17 +516,29 @@ def highlight(text: str, kw: str) -> str:
     pat = re.compile(re.escape(kw), re.IGNORECASE)
     return pat.sub(lambda m: f"<mark style='background:#fff3a1; padding:0 2px; border-radius:4px'>{m.group(0)}</mark>", text)
 
+# === 교체: sample_sentences_for_keyword ===
 def sample_sentences_for_keyword(df_in: pd.DataFrame, kw: str, text_cols: list[str], 
                                  per_kw: int = 3, seed: int = 42) -> list[tuple[str, str]]:
     """
     kw를 포함하는 문장을 최대 per_kw개 샘플링.
     반환: [(파일명, 문장_HTML), ...]
     """
-    rng = random.Random(seed + hash(kw) % 10000)
+    # ✔ 지역 임포트로 NameError 방지
+    from random import Random
+
+    # ✔ 시드 캐스팅(숫자/문자 상관없이 안전)
+    try:
+        base_seed = int(seed)
+    except Exception:
+        base_seed = 42
+
+    rng = Random(base_seed + (hash(str(kw)) % 10000))
+
     texts = []
     cols = [c for c in text_cols if c in df_in.columns]
     if not cols:
         return []
+
     for _, row in df_in.iterrows():
         blob = " ".join(str(row.get(c, "") or "") for c in cols).strip()
         if not blob:
@@ -534,29 +546,30 @@ def sample_sentences_for_keyword(df_in: pd.DataFrame, kw: str, text_cols: list[s
         sents = split_sentences(blob)
         hits = [s for s in sents if kw.lower() in s.lower()]
         if hits:
-            # 파일명/식별자
             fname = str(row.get("파일명") or row.get("Filename") or "").strip()
-            # 샘플 몇 개만
             rng.shuffle(hits)
-            for s in hits[:min(5, per_kw*2)]:
+            for s in hits[:per_kw * 2]:   # 약간 넉넉히 가져와 중복 제거/축약 후 선택
                 texts.append((fname, s))
-    # 중복 제거(문장 기준)
+
+    # 중복 제거
     seen, uniq = set(), []
     for fn, s in texts:
-        k = (fn, s.lower())
-        if k in seen: 
+        key = (fn, s.strip().lower())
+        if key in seen:
             continue
-        seen.add(k)
+        seen.add(key)
         uniq.append((fn, s))
-    # 샘플링
+
+    # 최종 샘플
     rng.shuffle(uniq)
     uniq = uniq[:per_kw]
-    # 하이라이트/축약
+
     out = []
     for fn, s in uniq:
         clip = shorten_around_keyword(s, kw, half=140)
         out.append((fn, highlight(clip, kw)))
     return out
+
 
 # ========================= 국가 브리프(요약) 입력 =========================
 st.sidebar.header("국가 브리프(요약)")
@@ -1488,61 +1501,74 @@ elif mode == "ICT 유형 단일클래스":
                 st.info("표시할 키워드가 부족합니다.")
         with tab_extract:
             st.markdown("#### 대표 키워드 문장 발췌")
-            # 0) 텍스트 소스 선택(없으면 자동 폴백)
-            default_text_cols = [c for c in ["요약","주요 내용","full_text"] if c in sub_wb.columns]
-            text_cols = st.multiselect("검색할 텍스트 컬럼", 
-                                       options=[c for c in ["요약","주요 내용","full_text"] if c in df.columns],
-                                       default=default_text_cols or [c for c in df.columns if c in ["요약","주요 내용","full_text"]],
-                                       help="선택된 컬럼에서 키워드가 포함된 문장을 발췌합니다.")
+        
+            # (1) 텍스트 컬럼 자동 선택 (우선순위: full_text > 주요 내용 > 요약)
+            pref_cols = ["full_text", "주요 내용", "요약"]
+            text_cols = [c for c in pref_cols if c in sub_wb.columns]
             if not text_cols:
-                st.info("문장 발췌에 사용할 텍스트 컬럼이 없습니다. 최소 하나를 선택하세요.")
+                st.info("문장 발췌에 사용할 텍스트 컬럼이 없습니다. (full_text/주요 내용/요약 중 하나 필요)")
+                st.stop()
+        
+            # (2) UI 최소화 — 자동 모드 토글
+            auto_mode = st.toggle("자동 발췌 모드", value=True, help="상위 키워드 자동 선정 및 문장 발췌")
+            # 가벼운 고급 옵션(접힘)
+            with st.expander("고급 옵션", expanded=False):
+                default_topk = st.number_input("키워드 상위 N", min_value=3, max_value=20, value=8, step=1)
+                default_per_kw = st.number_input("키워드별 문장 수", min_value=1, max_value=5, value=2, step=1)
+                seed = st.number_input("무작위 시드", min_value=0, value=42, step=1)
+                # 필요 시 텍스트 컬럼 변경 허용
+                text_cols = st.multiselect("검색할 텍스트 컬럼", options=pref_cols, default=text_cols)
+        
+            # (3) 키워드 후보 계산 (워드클라우드와 동일한 필터링)
+            tokens = []
+            if "Hashtag_str" in sub_wb.columns and sub_wb["Hashtag_str"].notna().any():
+                for txt in sub_wb["Hashtag_str"].dropna().astype(str):
+                    tokens += [z.strip() for z in re.split(r"[;,]", txt) if z.strip()]
+            elif "Hashtag" in sub_wb.columns and sub_wb["Hashtag"].notna().any():
+                for txt in sub_wb["Hashtag"].dropna().astype(str):
+                    tokens += [z.strip() for z in re.split(r"[;,]", txt) if z.strip()]
+        
+            pool_cols_wc = [c for c in ["요약", "주요 내용"] if c in sub_wb.columns]
+            if pool_cols_wc:
+                for txt in sub_wb[pool_cols_wc].fillna("").astype(str).agg(" ".join, axis=1).tolist():
+                    for w in re.split(r"[^0-9A-Za-z가-힣]+", txt):
+                        w = w.strip()
+                        if len(w) >= 2:
+                            tokens.append(w)
+        
+            tokens = [w for w in tokens if w and w.lower() not in STOP_LOW and not re.fullmatch(r"\d+(\.\d+)?", w)]
+            kw_freq = Counter(tokens)
+        
+            # (4) 자동 모드: 상위 N개 바로 사용 / 수동 모드: 콤팩트 드롭다운 1개만
+            if auto_mode:
+                kw_selected = [k for k, _ in kw_freq.most_common(int(default_topk))]
+                per_kw = int(default_per_kw)
             else:
-                # 1) 키워드 후보 (워드클라우드 로직과 동일하게 산출)
-                tokens = []
-                if "Hashtag_str" in sub_wb.columns and sub_wb["Hashtag_str"].notna().any():
-                    for txt in sub_wb["Hashtag_str"].dropna().astype(str):
-                        tokens += [z.strip() for z in re.split(r"[;,]", txt) if z.strip()]
-                elif "Hashtag" in sub_wb.columns and sub_wb["Hashtag"].notna().any():
-                    for txt in sub_wb["Hashtag"].dropna().astype(str):
-                        tokens += [z.strip() for z in re.split(r"[;,]", txt) if z.strip()]
+                # 수동이라도 '태그 클라우드 같은 UI'는 피하고 간단 드롭다운만
+                all_kws = [k for k, _ in kw_freq.most_common(200)]
+                kw_selected = st.multiselect("키워드 선택(최대 12개)", options=all_kws, default=all_kws[:6], max_selections=12)
+                per_kw = int(default_per_kw)
         
-                # 요약/내용에서도 토큰화(2자 이상 단어)
-                pool_cols = [c for c in ["요약","주요 내용"] if c in sub_wb.columns]
-                if pool_cols:
-                    for txt in sub_wb[pool_cols].fillna("").astype(str).agg(" ".join, axis=1).tolist():
-                        for w in re.split(r"[^0-9A-Za-z가-힣]+", txt):
-                            w = w.strip()
-                            if len(w) >= 2:
-                                tokens.append(w)
+            if not kw_selected:
+                st.info("선택된 키워드가 없습니다.")
+            else:
+                st.markdown("<style>.ksp-quote{background:var(--card);border:1px solid var(--border);padding:10px;border-radius:10px;margin:6px 0}</style>", unsafe_allow_html=True)
         
-                # 불용어/숫자 제거
-                tokens = [
-                    w for w in tokens
-                    if w and w.lower() not in STOP_LOW and not re.fullmatch(r"\d+(\.\d+)?", w)
-                ]
-                kw_freq = Counter(tokens)
-                top_kw = [k for k, _ in kw_freq.most_common(30)]  # 후보 30개
+                # 1열~2열 자동 레이아웃
+                cols = st.columns(2, gap="large") if len(kw_selected) >= 6 else [st.container()]
         
-                # 2) UI: 키워드 선택/개수
-                kw_selected = st.multiselect("대표 키워드 선택", options=top_kw, default=top_kw[:8])
-                per_kw = st.slider("키워드별 발췌 문장 수", 1, 5, 3, help="키워드당 최대 몇 개의 문장을 보여줄지")
-                seed = st.number_input("무작위 시드", min_value=0, value=42, step=1, help="발췌 샘플 재현을 위한 시드")
-        
-                # 3) 렌더
-                if kw_selected:
-                    st.markdown("<style>.ksp-quote{background:var(--card);border:1px solid var(--border);padding:10px;border-radius:10px;margin:6px 0}</style>", unsafe_allow_html=True)
-                    for kw in kw_selected:
+                for i, kw in enumerate(kw_selected):
+                    target_col = cols[i % len(cols)]
+                    with target_col:
+                        st.markdown(f"**🔎 {kw}**")
                         sents = sample_sentences_for_keyword(sub_wb, kw, text_cols, per_kw=per_kw, seed=int(seed))
-                        with st.container(border=False):
-                            st.markdown(f"**🔎 {kw}**")
-                            if not sents:
-                                st.caption("· 일치 문장을 찾지 못했어요.")
-                            else:
-                                for fn, html_sent in sents:
-                                    meta = f"<div style='font-size:12px;color:#6b7280'>{fn}</div>" if fn else ""
-                                    st.markdown(f"<div class='ksp-quote'>{html_sent}{meta}</div>", unsafe_allow_html=True)
-                else:
-                    st.info("상단에서 키워드를 선택하세요.")
+                        if not sents:
+                            st.caption("· 일치 문장을 찾지 못했습니다.")
+                        else:
+                            for fn, html_sent in sents:
+                                meta = f"<div style='font-size:12px;color:#6b7280'>{fn}</div>" if fn else ""
+                                st.markdown(f"<div class='ksp-quote'>{html_sent}{meta}</div>", unsafe_allow_html=True)
+
 
 
     # ---- (4) 테이블: 클래스 전체 보고서 목록 ----
@@ -2301,6 +2327,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
