@@ -149,7 +149,7 @@ STOP = {
     "핵심", "수동", "지연", "그리고", "또한", "보고서입니다", "겪고", "인해", "현재", "다니는", "다룬다", "중심으로", "가능한", "한다", "위치", "부문의", "가장", "온두라스의", "운영을", "센터", "특히", "참여를", "등록", "초점을", "지원을", "제시했습니다", "행정의",
     "접근성을", "발생하는", "수립합니다", "제시합니다", "성공적인", "효율적인", "전환을", "대응", "자문을", "합니다", "기술을", "서비스에", "등의", "주요", "분절된", "시스템은", "기능이", "세르비아의", "방글라데시의", "강화하기", "체계적인", "문제를", "지원합니다", "높이는", "기본", "단지의", "산업의",
     "미흡한", "시스템이", "비롯한", "다각화와", "타지키스탄은", "타지키스탄의", "정보", "이에", "따라", "실정입니다", "데이터의", "데이터를", "공유하고", "것입니다", "궁극적으로", "기여할", "정확성을", "자동화하여", "수립의", "공유를", "융합하여", "부문을", "지속", "달성하도록", "성장을", "돕는", "산업과",
-    "경제에서", "경제로", "전환하고자", "그러나" ,"부문은", "부족으로", "잠재력을", "충분히", "활용하지", "못하고", "호주는", "호주의", "분야에서", "인도네시아는", "문제점을", "효율성을", "것으로", "지역의", "벤치마킹하여"
+    "경제에서", "경제로", "전환하고자", "그러나" ,"부문은", "부족으로", "잠재력을", "충분히", "활용하지", "못하고", "호주는", "호주의", "분야에서", "인도네시아는", "문제점을", "효율성을", "것으로", "지역의", "벤치마킹하여", "기대됩니"
 }
 STOP_LOW = {w.lower() for w in STOP}
 
@@ -589,15 +589,33 @@ def get_keybert(model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
     except Exception as e:
         return None  # 환경 제한 시 폴백 사용
 
+# ===== 강한 stop/필터 =====
+GENERIC_KO = {
+    "경제","사회","정책","데이터","디지털","서비스","시장","운영","현황","전략","방안","도입","개선","구축","체계",
+    "기반","중장기","보고","분석","지원","정부","공공","프로젝트","로드맵","비전","활용","강화","확대","평가","계획",
+    "사례","현지","과제","인프라","플랫폼","시스템","포털","조달","법제","제도","가이드라인","기획","추진","성과",
+    "과학기술","교육","보건","안전","보안","전자정부","스마트","혁신","연구","중소기업","산업","도시","센터","플렛폼",
+    "현안","자료","분야","지원기관","대상기관","주제분류","ict","ICT","AI","인공지능","빅데이터","클라우드"
+}
+GENERIC_EN = {
+    "data","digital","service","services","system","systems","platform","portal","project","program","policy","policies",
+    "plan","roadmap","model","models","evaluation","implementation","phase","final","interim","infrastructure","innovation"
+}
+STRONG_STOP = {s.lower() for s in (STOP | BASE_STOP | STOP_CUSTOM | GENERIC_KO | GENERIC_EN)}
+
 def _normalize_token(t: str) -> str:
     t = re.sub(r"[\"'’“”()\[\]{}<>]", "", str(t)).strip()
     t = re.sub(r"\s{2,}", " ", t)
     return t
 
 def _is_valid_kw(t: str) -> bool:
-    if not t or len(t) < 2: return False
+    if not t: return False
+    if len(t) < 2: return False
     if re.fullmatch(r"\d+(\.\d+)?", t): return False
-    return (t.lower() not in STOP_LOW)
+    # 조사/어미로 끝나는 1음절/불용 조사 제거(느슨한 규칙)
+    if re.search(r"[은는이가을를의에는로과와도만]", t[-1]): return False
+    return (t.lower() not in STRONG_STOP)
+
 
 def keybert_keywords_for_docs(
     docs: list[str],
@@ -653,6 +671,7 @@ def keybert_keywords_for_docs(
     cleaned.sort(key=lambda x: (x[1], min(len(x[0]), 20) / 20.0), reverse=True)
     out = [k for k, _ in cleaned[:top_n]]
     return out
+    
 def keybert_candidates_for_docs(
     docs: List[str],
     top_n: int = 30,
@@ -715,6 +734,7 @@ def _docs_texts(df_in: pd.DataFrame, text_cols: List[str]) -> List[str]:
     return out
 
 
+
 @st.cache_resource(show_spinner=False)
 def get_sbert(model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
     try:
@@ -725,7 +745,6 @@ def get_sbert(model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
 
 def _prep_docs(df_in: pd.DataFrame, text_cols: list[str]) -> list[str]:
     cols = [c for c in (text_cols or []) if c in df_in.columns]
-    if not cols: return []
     out = []
     for _, r in df_in.iterrows():
         t = " ".join(str(r.get(c, "") or "") for c in cols).strip()
@@ -733,100 +752,108 @@ def _prep_docs(df_in: pd.DataFrame, text_cols: list[str]) -> list[str]:
     return out
 
 def _contains_kw_doclevel(txt: str, kw: str) -> bool:
-    # 영문: 단어경계 우선, 한글/혼합: 서브스트링 보조
+    # 영문은 단어경계, 한국어/혼합은 서브스트링도 허용
     pat = re.compile(rf"(?i)(\b{re.escape(kw)}\b)|({re.escape(kw)})")
     return bool(pat.search(txt))
 
-def _doc_share(docs: list[str], kw: str) -> float:
-    if not docs: return 0.0
-    hit = 0
-    for t in docs:
-        if _contains_kw_doclevel(t, kw):
-            hit += 1
-    return hit / max(1, len(docs))
+def _doc_share(docs: list[str], kw: str) -> tuple[int, int, float]:
+    n = len(docs) or 1
+    c = sum(1 for t in docs if _contains_kw_doclevel(t, kw))
+    return c, n, c / n
 
-def _monroe_log_odds_z(c_a, n_a, c_b, n_b, alpha=0.01):
-    """
-    Monroe et al. (2008) 베이지안 log-odds w/ informative Dirichlet prior
-    c_a: 클래스 내 카운트, n_a: 클래스 총문서
-    c_b: 배경 카운트,   n_b: 배경 총문서
-    반환: z-score (양수=클래스 편향)
-    """
-    # add-alpha smoothing on doc-hits
+def _monroe_log_odds_z(c_a, n_a, c_b, n_b, alpha=0.5):
     pa = (c_a + alpha) / (n_a + 2*alpha)
     pb = (c_b + alpha) / (n_b + 2*alpha)
     logodds = math.log(pa/(1-pa+1e-12) + 1e-12) - math.log(pb/(1-pb+1e-12) + 1e-12)
-    # 분산 근사(문서 이항모형)
     va = 1.0 / max(1e-9, (c_a + alpha)) + 1.0 / max(1e-9, (n_a - c_a + alpha))
     vb = 1.0 / max(1e-9, (c_b + alpha)) + 1.0 / max(1e-9, (n_b - c_b + alpha))
-    z = logodds / math.sqrt(va + vb)
-    return z
+    return logodds / math.sqrt(va + vb)
 
 @lru_cache(maxsize=2048)
 def _embed_phrase(phrase: str):
-    model = get_sbert()
-    if model is None:
-        return None
-    return model.encode(phrase, normalize_embeddings=True)
+    m = get_sbert()
+    if m is None: return None
+    return m.encode(phrase, normalize_embeddings=True)
+
+def _centroid(docs: list[str]):
+    m = get_sbert()
+    if m is None or not docs: return None
+    import numpy as _np
+    embs = m.encode(docs, normalize_embeddings=True)
+    return _np.mean(embs, axis=0)
 
 def _cos(a, b):
     import numpy as _np
     if a is None or b is None: return 0.0
     return float(_np.clip(_np.dot(a, b), -1.0, 1.0))
 
-def _centroid(docs: list[str]):
-    model = get_sbert()
-    if model is None or not docs:
-        return None
-    emb = model.encode(docs, normalize_embeddings=True)
-    import numpy as _np
-    return _np.mean(emb, axis=0)
 
-def rerank_with_contrastive(
+def rerank_with_negative_contrast(
     candidates: list[tuple[str, float]],   # (kw, keybert_score)
     df_all: pd.DataFrame,
-    df_class: pd.DataFrame,
+    df_class: pd.DataFrame,   # 선택 ICT
+    df_negative: pd.DataFrame,# 다른 ICT 전부
     text_cols: list[str],
-    w_lift=0.5, w_logodds=0.3, w_embed=0.2,
-    alpha=1.0
+    w_lift=0.55, w_logodds=0.30, w_embed=0.15,
+    unigram_penalty=0.25, bigram_bonus=0.10, trigram_bonus=0.15
 ) -> list[tuple[str, float, float, float, float, float]]:
     """
-    반환: [(kw, final_score, lift, logodds_z, embed_delta, keybert_score)]
+    반환: [(kw, final, lift, logodds_z, embedΔ, keybert)]
     """
-    docs_all   = _prep_docs(df_all, text_cols)
-    docs_class = _prep_docs(df_class, text_cols)
-    n_all, n_cls = max(1, len(docs_all)), max(1, len(docs_class))
-
-    # 임베딩 대비 준비(클래스 중심 vs 전체 중심)
-    c_all  = _centroid(docs_all)
-    c_cls  = _centroid(docs_class)
+    docs_cls = _prep_docs(df_class, text_cols)
+    docs_neg = _prep_docs(df_negative, text_cols)
+    c_cls = _centroid(docs_cls); c_neg = _centroid(docs_neg)
 
     out = []
     for kw, kb in candidates:
-        # 문서 비중 기반
-        share_cls  = _doc_share(docs_class, kw)
-        share_all  = _doc_share(docs_all,   kw)
-        lift = (share_cls + 1e-6) / (share_all + 1e-6)
+        if not _is_valid_kw(kw):
+            continue
+        # 문서 비중(해당 ICT vs 다른 ICT)
+        hit_c, n_c, share_c = _doc_share(docs_cls, kw)
+        hit_n, n_n, share_n = _doc_share(docs_neg, kw)
+        lift = (share_c + 1e-6) / (share_n + 1e-6)  # ← 진짜 '구분력'
 
-        # 베이지안 log-odds z
-        hits_cls = int(round(share_cls * n_cls))
-        hits_all = int(round(share_all * n_all))
-        z = _monroe_log_odds_z(hits_cls, n_cls, hits_all, n_all, alpha=max(alpha, 0.01))
+        # log-odds z (ICT 편향)
+        z = _monroe_log_odds_z(hit_c, n_c, hit_n, n_n, alpha=0.5)
 
-        # 임베딩 대비(그 ICT에 더 가까운지)
+        # 임베딩 대비(클래스 중심에 더 가깝고, negative 에서 멀수록 +
         e_kw = _embed_phrase(kw)
-        emb_delta = _cos(e_kw, c_cls) - _cos(e_kw, c_all)
+        emb_delta = (_cos(e_kw, c_cls) - _cos(e_kw, c_neg))
 
-        # 스코어 결합(안정화를 위해 log-lift 사용)
+        # n그램 가중
+        ngram = len(kw.split())
+        gram_bonus = (trigram_bonus if ngram >= 3 else bigram_bonus if ngram == 2 else -unigram_penalty)
+
+        # 최종 점수(로그-리프트 안정화)
         import numpy as _np
-        log_lift = float(_np.log(max(lift, 1e-6)))
-        final = w_lift*log_lift + w_logodds*z + w_embed*emb_delta + 0.05*kb  # KeyBERT 약간만 tie-break
+        final = w_lift * float(_np.log(max(lift, 1e-6))) + w_logodds * z + w_embed * emb_delta + gram_bonus + 0.03*kb
 
         out.append((kw, final, lift, z, emb_delta, kb))
 
-    # 내림차순 정렬
     out.sort(key=lambda x: x[1], reverse=True)
     return out
+
+# MMR 다양성 선택(임베딩으로 비슷한 후보 덜어내기)
+def mmr_select(keywords: list[str], k: int, lambda_div=0.65):
+    m = get_sbert()
+    if m is None or len(keywords) <= k:
+        return keywords[:k]
+    import numpy as _np
+    embs = m.encode(keywords, normalize_embeddings=True)
+    selected = [0]  # 최고점부터 시작
+    candidates = list(range(1, len(keywords)))
+    while len(selected) < min(k, len(keywords)) and candidates:
+        sim_to_sel = []
+        for idx in candidates:
+            sim = max(_np.dot(embs[idx], embs[j]) for j in selected)
+            sim_to_sel.append((idx, sim))
+        # MMR: 새 점수 = (1-λ)*Relevance - λ*Similarity
+        # 여기서는 relevance 순서는 이미 반영되어 있으니 similarity만 최소화
+        next_idx = min(sim_to_sel, key=lambda x: lambda_div * x[1])[0]
+        selected.append(next_idx)
+        candidates.remove(next_idx)
+    return [keywords[i] for i in selected[:k]]
+
 
 # ========================= 국가 브리프(요약) 입력 =========================
 st.sidebar.header("국가 브리프(요약)")
@@ -1779,29 +1806,36 @@ elif mode == "ICT 유형 단일클래스":
                 # 필요 시 텍스트 컬럼 바꾸기
                 text_cols   = st.multiselect("검색할 텍스트 컬럼", options=pref_cols, default=text_cols)
         
-            # (3) 입력 문서 만들기(해당 ICT 유형 텍스트)
+            # 입력 문서
             docs = _docs_texts(sub_wb, text_cols)
-
             
-            # ① KeyBERT 후보
+            # KeyBERT 후보
             candidates = keybert_candidates_for_docs(
-                docs, top_n=int(topk_auto if auto_mode else 30),
+                docs,
+                top_n=int(topk_auto if auto_mode else 40),
                 ngram_range=(int(ngram_min), int(ngram_max)),
-                mmr=bool(mmr), diversity=float(diversity),
+                mmr=bool(mmr),
+                diversity=float(diversity),
             )
             
-            # ② 대비형 재랭킹
-            ranked = rerank_with_contrastive(
+            # negative set = 다른 ICT 전체
+            df_negative = df[df["ICT 유형"].astype(str).str.strip() != sel].copy()
+            
+            # 대비형 재랭크(negative 사용 + n그램 가중)
+            ranked = rerank_with_negative_contrast(
                 candidates=candidates,
-                df_all=df,          # 전체 코퍼스
-                df_class=sub_wb,    # 선택 ICT 코퍼스
+                df_all=df,
+                df_class=sub_wb,
+                df_negative=df_negative,
                 text_cols=text_cols,
-                w_lift=0.55, w_logodds=0.30, w_embed=0.15,  # 가중치 예시(라이트 테마)
-                alpha=1.0
+                w_lift=0.55, w_logodds=0.30, w_embed=0.15,
+                unigram_penalty=0.25, bigram_bonus=0.10, trigram_bonus=0.15
             )
             
-            # ③ 최종 N개 선택
-            kw_selected = [kw for kw, final, lift, z, emb, kb in ranked[:int(topk_auto)]]
+            # 상위 N → MMR 다양성으로 최종 추림
+            first_list = [kw for kw, *_ in ranked]
+            kw_selected = mmr_select(first_list, k=int(topk_auto), lambda_div=0.70)
+
 
         
             # (5) 렌더
@@ -2579,6 +2613,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
