@@ -1887,13 +1887,14 @@ def _blocked_by_regex(tok: str) -> bool:
 
 
     
-# 동의어 사전 키만 대문자로
-SYN_UP = {k.upper(): v for k, v in SYN.items()}
+# 동의어 사전 키를 대문자로, 값도 대문자로 맞춤
+SYN_UP = {k.upper(): (v.upper() if isinstance(v, str) else v) for k, v in SYN.items()}
 
 def _norm_token(x: str) -> str:
     x = re.sub(r"[\"'’“”()\[\]{}<>]", "", str(x).strip())
-    xu = x.upper()   # ← 대문자
-    return SYN_UP.get(xu, xu)   # 값은 그대로, 키만 대문자 매칭
+    xu = x.upper()                 # ← 모두 대문자
+    return SYN_UP.get(xu, xu)      # ← 치환 결과도 대문자
+
 
 
 
@@ -1952,24 +1953,36 @@ freq_all = collect_hashtag_freq(df)
 # 후보 생성
 candidates_all = [(k, c) for k, c in freq_all.items() if not is_excluded_token(k)]
 
-# 후보가 너무 적으면 완화 (여기도 대문자 기준)
+# ---- 후보가 적을 때 완화 보충 ----
 if len(candidates_all) < 25 and HASHTAG_COL:
     tmp = Counter()
     for raw in df[HASHTAG_COL].dropna().astype(str):
         for t in re.split(r"[,\;/]| {2,}", raw):
-            t = _norm_token(t.strip())
-            core = re.sub(r"\s+", "", t)
-            if t and (core not in COUNTRY_WORDS) and (core not in AI_SET) \
-               and (not _is_numericish(core)) and (not _blocked_by_regex(core)):
+            t = _norm_token(t.strip())       # 이미 대문자
+            core = re.sub(r"\s+", "", t)     # 대문자 상태 유지
+            if (
+                t
+                and (core not in COUNTRY_WORDS)
+                and (core not in AI_SET)
+                and (core not in STOP_LOW_ALL)      # ← ★ 누락됐던 부분 추가
+                and (not _is_numericish(core))
+                and (not _blocked_by_regex(core))
+            ):
                 tmp[t] += 1
+
     for k, v in tmp.items():
         freq_all[k] = max(freq_all.get(k, 0), v)
 
+    # 최종 후보 재계산에도 STOP 필터 포함
     candidates_all = [
         (k, c) for k, c in freq_all.items()
-        if (k not in COUNTRY_WORDS) and (k not in AI_SET)
-           and (not _is_numericish(k)) and (not _blocked_by_regex(k))
+        if (k not in COUNTRY_WORDS)
+           and (k not in AI_SET)
+           and (k not in STOP_LOW_ALL)        # ← ★ 추가
+           and (not _is_numericish(k))
+           and (not _blocked_by_regex(k))
     ]
+
 
 
 
@@ -2065,6 +2078,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
