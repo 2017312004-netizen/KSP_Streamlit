@@ -1770,9 +1770,7 @@ elif mode == "ICT 유형 단일클래스":
                 # 필요 시 텍스트 컬럼 바꾸기
                 text_cols   = st.multiselect("검색할 텍스트 컬럼", options=pref_cols, default=text_cols)
         
-            # (3) 입력 문서 만들기(해당 ICT 유형의 텍스트만)
-            # (3) 입력 문서 만들기(해당 ICT 유형 텍스트)
-            docs = _docs_texts(sub_wb, text_cols)
+            
             
             # ① KeyBERT 후보
             candidates = keybert_candidates_for_docs(
@@ -2570,6 +2568,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
