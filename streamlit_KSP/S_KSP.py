@@ -31,6 +31,9 @@ import plotly.graph_objects as go
 from matplotlib import font_manager, rcParams
 import math
 from functools import lru_cache
+from __future__ import annotations   # 3.9 호환용 (타입힌트)
+GLOBAL_FONT_PATH = None             # 폰트 가드
+
 
 # --------------------- 페이지/테마 ---------------------
 st.set_page_config(page_title="KSP Explorer (Pro v4)", layout="wide", page_icon="🌍")
@@ -316,14 +319,20 @@ def discover_data_files(dirs: list[Path]) -> list[Path]:
     # 가장 높은 점수(음수 정렬 보정 위해 -s)부터 오름차순 → 우리가 원하는 건 점수 큰 순이므로 다시 정렬 기준 주의
     # 위 score에서 -s, -mtime을 줬으니 "오름차순"으로 정렬하면 실질적으로 점수↓ → 원하는 건 반대.
     # 간단히 별도 key로 다시 정렬:
-    cands = sorted(cands, key=lambda p: (
-        # 같은 로직을 양수로 재작성
-        -(8 if "df1" in p.name.lower() else 0)
-        -(6 if "ksp" in p.name.lower() else 0)
-        -(5 if "state_of_the_table" in p.name.lower() else 0)
-        -(2 if ("export" in p.name.lower() or "table" in p.name.lower()) else 0),
-        -p.stat().st_mtime
-    ))
+    def _rank_value(path: Path) -> int:
+        name = path.name.lower()
+        score = 0
+        score += 8 if "df1" in name else 0
+        score += 6 if "ksp" in name else 0
+        score += 5 if "state_of_the_table" in name else 0
+        score += 2 if ("export" in name or "table" in name) else 0
+        return score
+    
+    cands = sorted(
+        cands,
+        key=lambda p: (-_rank_value(p), -p.stat().st_mtime)  # 점수↓, 최근파일↑
+    )
+
     # 중복 제거(동일 경로 대비 안전)
     seen = set(); out = []
     for p in cands:
@@ -1847,7 +1856,7 @@ elif mode == "ICT 유형 단일클래스":
         
            # 입력 문서
             docs = _docs_texts(sub_wb, text_cols)
-            docs = "\n".join(docs)
+            
             
             # 🔹 문서 단위 후보 + 병합 기반 KeyBERT
             candidates = keybert_candidates_for_docs(
@@ -2650,6 +2659,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
