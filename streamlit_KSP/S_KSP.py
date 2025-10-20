@@ -402,7 +402,7 @@ with st.expander("데이터 미리보기 / 진단", expanded=False):
 # ========================= 전역 컬러 팔레트 =========================
 
 
-# 1) 라벨 순서(카테고리 순서) 고정 — '미분류'는 항상 맨 뒤로
+# 1) 라벨 순서(카테고리 순서) 고정
 def ordered_with_misc_last(values, misc=("미분류", "기타", "기타/미분류")):
     vals = [str(v).strip() for v in values if str(v).strip()]
     uniq = []
@@ -416,23 +416,34 @@ def ordered_with_misc_last(values, misc=("미분류", "기타", "기타/미분�
 WB_ORDER   = ordered_with_misc_last(df["ICT 유형"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류").tolist())
 SUBJ_ORDER = ordered_with_misc_last(df["주제분류(대)"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류").tolist())
 
-# 2) 충분히 긴 색 목록 (Plotly 기본 정성 팔레트 여러 개 이어붙이기)
+# 2) Plotly 기본 팔레트 조합
 _BASE_QUALS = (
-    px.colors.qualitative.Set2
+    px.colors.qualitative.Set1
+    + px.colors.qualitative.Set2
     + px.colors.qualitative.Set3
     + px.colors.qualitative.Dark24
-    + px.colors.qualitative.Pastel
     + px.colors.qualitative.Bold
-    + px.colors.qualitative.Safe
+    + px.colors.qualitative.Vivid
 )
 
+# 3) 색상 보정 함수 (채도↑, 명도 조정)
+def _brighten_color(c: str, s_scale=1.25, l_shift=-0.05):
+    """HEX 색상을 HLS 공간에서 보정해 더 선명하게 반환"""
+    c = c.strip("#")
+    r, g, b = tuple(int(c[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    s = min(1, s * s_scale)        # 채도 증가
+    l = min(1, max(0, l + l_shift)) # 명도 조정
+    r2, g2, b2 = colorsys.hls_to_rgb(h, l, s)
+    return f"#{int(r2*255):02x}{int(g2*255):02x}{int(b2*255):02x}"
+
 def make_color_map(names, base_colors=_BASE_QUALS):
-    # 이름 목록 길이만큼 순환해서 색 배정(순서 안정)
-    cmap = {}
     cycle = itertools.cycle(base_colors)
+    cmap = {}
     for n in names:
         if n not in cmap:
-            cmap[n] = next(cycle)
+            raw = next(cycle)
+            cmap[n] = _brighten_color(raw, s_scale=1.35, l_shift=-0.05)
     return cmap
 
 COLOR_WB   = make_color_map(WB_ORDER)
@@ -442,7 +453,86 @@ COLOR_SUBJ = make_color_map(SUBJ_ORDER)
 def _font_path_safe():
     return GLOBAL_FONT_PATH or find_korean_font()  # 둘 다 없으면 None
 
+SENT_SPLIT_RE = re.compile(r"(?<=[\.!\?]|[。！？]|[…]|[;]|[ㆍ]|[·]|[·\s]|[”’\"\'])\s+|(?<=[\.\?])(?=[가-힣A-Za-z0-9])")
+KOR_END = "다다요요함음임니까니가라를에에서의으로로다되었으며했고하며"
 
+def split_sentences(txt: str, max_len: int = 500) -> list[str]:
+    """한국어/영문 혼합 문장 분할 + 과도하게 긴 문장 자르기"""
+    if not isinstance(txt, str) or not txt.strip():
+        return []
+    # 1차 분할
+    parts = re.split(r'(?<=[\.!\?])\s+|[。]|[！]|[？]|\n+', txt)
+    out = []
+    for p in parts:
+        p = p.strip()
+        if not p: 
+            continue
+        # 너무 길면 키워드 매칭 전에 2차 분할 시도
+        if len(p) > max_len:
+            chunks = re.split(r'[,;·]|(?<=\))\s+|(?<=\])\s+', p)
+            for c in chunks:
+                c = c.strip()
+                if 30 <= len(c) <= max_len:
+                    out.append(c)
+        else:
+            out.append(p)
+    return [s for s in out if len(s) >= 20]
+
+def shorten_around_keyword(sent: str, kw: str, half: int = 140) -> str:
+    """키워드 기준 좌우로 문맥만 남겨 280자 내로 축약"""
+    i = sent.lower().find(kw.lower())
+    if i < 0:
+        return sent[:280] + ("…" if len(sent) > 280 else "")
+    left = max(0, i - half)
+    right = min(len(sent), i + len(kw) + half)
+    clip = (("…" if left > 0 else "") + sent[left:right] + ("…" if right < len(sent) else ""))
+    return clip
+
+def highlight(text: str, kw: str) -> str:
+    pat = re.compile(re.escape(kw), re.IGNORECASE)
+    return pat.sub(lambda m: f"<mark style='background:#fff3a1; padding:0 2px; border-radius:4px'>{m.group(0)}</mark>", text)
+
+def sample_sentences_for_keyword(df_in: pd.DataFrame, kw: str, text_cols: list[str], 
+                                 per_kw: int = 3, seed: int = 42) -> list[tuple[str, str]]:
+    """
+    kw를 포함하는 문장을 최대 per_kw개 샘플링.
+    반환: [(파일명, 문장_HTML), ...]
+    """
+    rng = random.Random(seed + hash(kw) % 10000)
+    texts = []
+    cols = [c for c in text_cols if c in df_in.columns]
+    if not cols:
+        return []
+    for _, row in df_in.iterrows():
+        blob = " ".join(str(row.get(c, "") or "") for c in cols).strip()
+        if not blob:
+            continue
+        sents = split_sentences(blob)
+        hits = [s for s in sents if kw.lower() in s.lower()]
+        if hits:
+            # 파일명/식별자
+            fname = str(row.get("파일명") or row.get("Filename") or "").strip()
+            # 샘플 몇 개만
+            rng.shuffle(hits)
+            for s in hits[:min(5, per_kw*2)]:
+                texts.append((fname, s))
+    # 중복 제거(문장 기준)
+    seen, uniq = set(), []
+    for fn, s in texts:
+        k = (fn, s.lower())
+        if k in seen: 
+            continue
+        seen.add(k)
+        uniq.append((fn, s))
+    # 샘플링
+    rng.shuffle(uniq)
+    uniq = uniq[:per_kw]
+    # 하이라이트/축약
+    out = []
+    for fn, s in uniq:
+        clip = shorten_around_keyword(s, kw, half=140)
+        out.append((fn, highlight(clip, kw)))
+    return out
 
 # ========================= 국가 브리프(요약) 입력 =========================
 st.sidebar.header("국가 브리프(요약)")
@@ -1278,9 +1368,10 @@ elif mode == "ICT 유형 단일클래스":
     part_countries = sub_wb_geo["iso3"].nunique()  # 참여국가 수(지도용 확장 df로 계산)
     st.markdown(f"### {sel} — 전체 프로젝트 {n_docs:,}건 · 참여국가 {part_countries:,}개국")
 
-    tab_overview, tab_brief, tab_cloud, tab_table = st.tabs(
-        ["개요", f"{sel} 종합요약", "워드클라우드 / 키워드", "테이블"]
+    tab_overview, tab_brief, tab_cloud, tab_extract, tab_table = st.tabs(
+    ["개요", f"{sel} 종합요약", "워드클라우드 / 키워드", "키워드 문장 발췌", "테이블"]
     )
+
 
     # ---- (1) 개요: 연도 범위, 대상기관 수, 참여국가 상위 보기(선택 국가 보조 표기) ----
     with tab_overview:
@@ -1371,6 +1462,64 @@ elif mode == "ICT 유형 단일클래스":
                 st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar": False})
             else:
                 st.info("표시할 키워드가 부족합니다.")
+        with tab_extract:
+            st.markdown("#### 대표 키워드 문장 발췌")
+            # 0) 텍스트 소스 선택(없으면 자동 폴백)
+            default_text_cols = [c for c in ["요약","주요 내용","full_text"] if c in sub_wb.columns]
+            text_cols = st.multiselect("검색할 텍스트 컬럼", 
+                                       options=[c for c in ["요약","주요 내용","full_text"] if c in df.columns],
+                                       default=default_text_cols or [c for c in df.columns if c in ["요약","주요 내용","full_text"]],
+                                       help="선택된 컬럼에서 키워드가 포함된 문장을 발췌합니다.")
+            if not text_cols:
+                st.info("문장 발췌에 사용할 텍스트 컬럼이 없습니다. 최소 하나를 선택하세요.")
+            else:
+                # 1) 키워드 후보 (워드클라우드 로직과 동일하게 산출)
+                tokens = []
+                if "Hashtag_str" in sub_wb.columns and sub_wb["Hashtag_str"].notna().any():
+                    for txt in sub_wb["Hashtag_str"].dropna().astype(str):
+                        tokens += [z.strip() for z in re.split(r"[;,]", txt) if z.strip()]
+                elif "Hashtag" in sub_wb.columns and sub_wb["Hashtag"].notna().any():
+                    for txt in sub_wb["Hashtag"].dropna().astype(str):
+                        tokens += [z.strip() for z in re.split(r"[;,]", txt) if z.strip()]
+        
+                # 요약/내용에서도 토큰화(2자 이상 단어)
+                pool_cols = [c for c in ["요약","주요 내용"] if c in sub_wb.columns]
+                if pool_cols:
+                    for txt in sub_wb[pool_cols].fillna("").astype(str).agg(" ".join, axis=1).tolist():
+                        for w in re.split(r"[^0-9A-Za-z가-힣]+", txt):
+                            w = w.strip()
+                            if len(w) >= 2:
+                                tokens.append(w)
+        
+                # 불용어/숫자 제거
+                tokens = [
+                    w for w in tokens
+                    if w and w.lower() not in STOP_LOW and not re.fullmatch(r"\d+(\.\d+)?", w)
+                ]
+                kw_freq = Counter(tokens)
+                top_kw = [k for k, _ in kw_freq.most_common(30)]  # 후보 30개
+        
+                # 2) UI: 키워드 선택/개수
+                kw_selected = st.multiselect("대표 키워드 선택", options=top_kw, default=top_kw[:8])
+                per_kw = st.slider("키워드별 발췌 문장 수", 1, 5, 3, help="키워드당 최대 몇 개의 문장을 보여줄지")
+                seed = st.number_input("무작위 시드", min_value=0, value=42, step=1, help="발췌 샘플 재현을 위한 시드")
+        
+                # 3) 렌더
+                if kw_selected:
+                    st.markdown("<style>.ksp-quote{background:var(--card);border:1px solid var(--border);padding:10px;border-radius:10px;margin:6px 0}</style>", unsafe_allow_html=True)
+                    for kw in kw_selected:
+                        sents = sample_sentences_for_keyword(sub_wb, kw, text_cols, per_kw=per_kw, seed=int(seed))
+                        with st.container(border=False):
+                            st.markdown(f"**🔎 {kw}**")
+                            if not sents:
+                                st.caption("· 일치 문장을 찾지 못했어요.")
+                            else:
+                                for fn, html_sent in sents:
+                                    meta = f"<div style='font-size:12px;color:#6b7280'>{fn}</div>" if fn else ""
+                                    st.markdown(f"<div class='ksp-quote'>{html_sent}{meta}</div>", unsafe_allow_html=True)
+                else:
+                    st.info("상단에서 키워드를 선택하세요.")
+
 
     # ---- (4) 테이블: 클래스 전체 보고서 목록 ----
     with tab_table:
@@ -2128,6 +2277,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
