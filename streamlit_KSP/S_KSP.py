@@ -342,7 +342,7 @@ if df is None or df.empty:
     st.stop()
 
 # 필수 컬럼 진단
-REQ = ["파일명","대상국","대상기관","주요 분야","지원기관","사업 기간","주요 내용","기대 효과",
+REQ = ["파일명","대상국","대상기관","주요 분야","지원기관","주요 내용","기대 효과",
        "요약","ICT 유형","주제분류(대)","Hashtag","Hashtag_str","full_text"]
 missing = [c for c in REQ if c not in df.columns]
 if missing:
@@ -734,33 +734,30 @@ def years_from_span(text):
 def expand_years(df_in: pd.DataFrame) -> pd.DataFrame:
     """
     후보 컬럼(우선순위 순)에서 연도 추출:
-      ["사업 기간", "연도", "기간", "Project Period", "Years", "Year"]
+      ["사업 기간", "연도", "기간", "Project Period", "Years", "Year", "year"]
     하나도 없으면 '빈 결과'를 돌려주고, 이후 시각화는 자동 skip.
     """
+    # 완전 방어
     if df_in is None or df_in.empty:
-        return pd.DataFrame(columns=["연도"], dtype="Int64")
+        return pd.DataFrame({"연도": pd.Series([], dtype="Int64")})
 
     cand_cols = ["사업 기간", "연도", "기간", "Project Period", "Years", "Year", "year"]
     src_col = next((c for c in cand_cols if c in df_in.columns), None)
-
-    dfy = df_in.copy()
-
     if src_col is None:
-        # 완전 방어: 나중 파이프라인이 죽지 않도록 연도 없음 처리
-        out = pd.DataFrame({"연도": pd.Series([], dtype="Int64")})
-        # 원본의 인덱스를 유지하려면 merge/join 대신 필요 시 호출부에서 사용
-        return out
-
-    # 각 행별로 연도 리스트 생성
-    years_list = dfy[src_col].apply(years_from_span)
-
-    if not years_list.apply(lambda x: len(x) > 0).any():
-        # 후보 컬럼이 있긴 한데 실제 연도 패턴이 없을 때(전부 공란, 텍스트 등)
         return pd.DataFrame({"연도": pd.Series([], dtype="Int64")})
 
-    dfy = dfy.assign(연도목록=years_list).explode("연도목록").rename(columns={"연도목록": "연도"})
-    dfy["연도"] = pd.to_numeric(dfy["연도"], errors="coerce").astype("Int64")
-    return dfy
+    # 연도 리스트 추출
+    years_list = df_in[src_col].apply(years_from_span)
+    if not years_list.apply(lambda x: len(x) > 0).any():
+        return pd.DataFrame({"연도": pd.Series([], dtype="Int64")})
+
+    # 임시 컬럼(_years)로 explode → 숫자화 → 최종 '연도'로 rename
+    out = df_in.copy()
+    out = out.assign(_years=years_list).explode("_years")  # 여기까지는 object
+    out["_years"] = pd.to_numeric(out["_years"], errors="coerce").astype("Int64")
+    out = out.rename(columns={"_years": "연도"})  # 마지막에만 이름 교체(중복 회피)
+    return out
+
 
 
 dfy = expand_years(df)     # 키워드/주제 상대 트렌드는 '국가 중복 없는' 원본 df 기준
@@ -1816,6 +1813,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
