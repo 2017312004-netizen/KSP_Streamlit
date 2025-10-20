@@ -786,13 +786,7 @@ def get_sbert(model_name: str = "intfloat/multilingual-e5-larg"):
     except Exception:
         return None
 
-def _prep_docs(df_in: pd.DataFrame, text_cols: list[str]) -> list[str]:
-    cols = [c for c in (text_cols or []) if c in df_in.columns]
-    out = []
-    for _, r in df_in.iterrows():
-        t = " ".join(str(r.get(c, "") or "") for c in cols).strip()
-        if t: out.append(t)
-    return out
+
 
 def _contains_kw_doclevel(txt: str, kw: str) -> bool:
     # 영문은 단어경계, 한국어/혼합은 서브스트링도 허용
@@ -2654,6 +2648,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
