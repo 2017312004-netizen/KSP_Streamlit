@@ -1855,19 +1855,15 @@ st.subheader("키워드 트렌드 — 직접 선택 (검색 없음 · 국가/AI 
 
 # ====================== 사용자 불용어 (코드에서 직접 편집) ======================
 # ↓ 여기에 원하는 불용어를 마음껏 넣으세요 (대소문자 무시)
-STOP_CUSTOM = {
-    "높여", "기관별", "지속가능한", "공무원의", "있음", "사용자"
-}
-STOP_CUSTOM_REGEX = [
-    # 필요하면 정규식 패턴 추가: r"^제도.?개선$", r".*계획$", ...
-]
+STOP_CUSTOM = {"높여","기관별","지속가능한","공무원의","있음","사용자"}
+
+STOP_CUSTOM_REGEX = []  # 필요 시 정규식 추가
 
 STOP_LOW_ALL = (
     {w.upper() for w in STOP} |
     {w.upper() for w in STOP_CUSTOM} |
     {w.upper() for w in globals().get("BASE_STOP", set())}
 )
-
 
 def _blocked_by_regex(tok: str) -> bool:
     if not STOP_CUSTOM_REGEX:
@@ -1876,12 +1872,16 @@ def _blocked_by_regex(tok: str) -> bool:
     import re as _re
     return any(_re.search(p, up) for p in STOP_CUSTOM_REGEX)
 
+
     
-# --- 0) 도우미: 동의어/정규화 ---
+# 기존 SYN 그대로 두고, 아래 한 줄 추가
+SYN_UP = {k.upper(): v for k, v in SYN.items()}
+
 def _norm_token(x: str) -> str:
     x = re.sub(r"[\"'’“”()\[\]{}<>]", "", str(x).strip())
-    xu = x.upper()  # 🔹 대문자 변환
-    return SYN.get(xu, x)
+    xu = x.upper()
+    return SYN_UP.get(xu, xu)   # 값은 그대로, 키만 대문자로 매칭
+
 
 
 def _is_numericish(s: str) -> bool:
@@ -1896,39 +1896,42 @@ def collect_hashtag_freq(df_in: pd.DataFrame) -> Counter:
         return freq
     for raw in df_in[HASHTAG_COL].dropna().astype(str):
         for t in re.split(r"[,\;/]| {2,}", raw):
-            t = _norm_token(t.strip())
-            core = re.sub(r"\s+", "", t.lower())
-            if not core or len(core) < 2: 
+            t = _norm_token(t.strip())      # 이미 대문자화됨
+            core = re.sub(r"\s+", "", t)    # t가 대문자라 core도 대문자
+            if not core or len(core) < 2:
                 continue
-            # 교체 후:
-            if core in STOP_LOW_ALL or _is_numericish(core) or _blocked_by_regex(t):
+            if core in STOP_LOW_ALL or _is_numericish(core) or _blocked_by_regex(core):
                 continue
             freq[t] += 1
     return freq
 
+
 # --- 2) 제외 집합: 국가/지역 + 자동(AI) 키워드 ---
 COUNTRY_WORDS = set()
-for k,(iso,en,ko) in COUNTRY_MAP.items():
-    COUNTRY_WORDS |= {k.strip().lower(), en.strip().lower(), ko.strip().lower(), iso.strip().lower()}
+for k, (iso, en, ko) in COUNTRY_MAP.items():
+    COUNTRY_WORDS |= {k.upper(), en.upper(), ko.upper(), iso.upper()}
+
 if "대상국" in df.columns:
     for s in df["대상국"].dropna().astype(str):
         for tok in split_countries(s):
-            COUNTRY_WORDS.add(tok.strip().lower())
+            COUNTRY_WORDS.add(tok.strip().upper())
 
 AI_SET = set()
 try:
-    AI_SET |= {t.lower() for t in rise_sel} | {t.lower() for t in fall_sel}
+    AI_SET |= {t.upper() for t in rise_sel} | {t.upper() for t in fall_sel}
 except Exception:
     pass
 
 def is_excluded_token(tok: str) -> bool:
-    low = tok.lower().strip()
+    up = tok.upper().strip()
     return (
-        (low in COUNTRY_WORDS) or
-        (low in AI_SET) or
-        (low in STOP_LOW_ALL) or
-        _is_numericish(low)
+        (up in COUNTRY_WORDS) or
+        (up in AI_SET) or
+        (up in STOP_LOW_ALL) or
+        _is_numericish(up) or
+        _blocked_by_regex(up)
     )
+
 
 freq_all = collect_hashtag_freq(df)
 # 후보 정리(국가/AI/불용어 제외)
@@ -1936,23 +1939,22 @@ freq_all = collect_hashtag_freq(df)
 candidates_all = [(k, c) for k, c in freq_all.items()
                   if not (is_excluded_token(k) or _blocked_by_regex(k))]
 
-# 너무 적으면 완화(국가/AI/숫자만 제외)
 if len(candidates_all) < 25 and HASHTAG_COL:
     tmp = Counter()
     for raw in df[HASHTAG_COL].dropna().astype(str):
         for t in re.split(r"[,\;/]| {2,}", raw):
             t = _norm_token(t.strip())
-            core = re.sub(r"\s+", "", t.lower())
-            if t and core not in COUNTRY_WORDS and core not in AI_SET and not _is_numericish(core):
+            core = re.sub(r"\s+", "", t)
+            if t and core not in COUNTRY_WORDS and core not in AI_SET and not _is_numericish(core) and not _blocked_by_regex(core):
                 tmp[t] += 1
-    for k,v in tmp.items():
-        freq_all[k] = max(freq_all.get(k,0), v)
-            # 마지막 재계산 줄을 아래로 교체
-        candidates_all = [(k, c) for k, c in freq_all.items()
-                          if (k.lower() not in COUNTRY_WORDS)
-                          and (k.lower() not in AI_SET)
-                          and (not _is_numericish(k.lower()))
-                          and (not _blocked_by_regex(k))]
+    for k, v in tmp.items():
+        freq_all[k] = max(freq_all.get(k, 0), v)
+
+    candidates_all = [
+        (k, c) for k, c in freq_all.items()
+        if (k not in COUNTRY_WORDS) and (k not in AI_SET) and (not _is_numericish(k)) and (not _blocked_by_regex(k))
+    ]
+
 
 
 # 상위 300개만 노출
@@ -2047,6 +2049,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
