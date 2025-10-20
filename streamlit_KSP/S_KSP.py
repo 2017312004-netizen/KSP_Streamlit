@@ -598,7 +598,7 @@ GENERIC_KO = {
     "현안","자료","분야","지원기관","대상기관","주제분류","ict","ICT","AI","인공지능","빅데이터","클라우드", "기대됩니다",
     "생산성", "IT", "대한", "자원", "투자", "디지털화", "무역", "법정", "재정", "정보화", "법적", "인력", "민간", "맞춤형", "행정", "비즈니스", "제조업", "건설", "광업", "BIM", "에너지", "불가리아", "지속가능한", "IP", "중남미", "공장", "양성", "우즈베키스탄", "높이고", "이러한", "유치", "전문",
     "정책적", "촉진할", "성공", "루마니아", "특허", "상황입니다", "검토하여", "환경", "생태계", "온두라스", "구축하여", "거버넌스", "필리핀", "시범", "심사", "업무", "데이터베이스", "온라인", "있으며", "산학연", "전자", "사이버", "다룹니다", "감사", "교통", "담고", "조세", "예산", "강조합니다", "세수",
-    "투명성", "인센티브", "법률", "기술적", "함께", "인도네시아", "세무", "조직", "높여", "방글라데시", "수집", "확보하고", "멕시코", "효율성", "제공합니다", "적합한", "국제", "컨설팅", "분석한다", "공무원", "납세자", "납세", "가능하게", "크게", "선진"
+    "투명성", "인센티브", "법률", "기술적", "함께", "인도네시아", "세무", "조직", "높여", "방글라데시", "수집", "확보하고", "멕시코", "효율성", "제공합니다", "적합한", "국제", "컨설팅", "분석한다", "공무원", "납세자", "납세", "가능하게", "크게", "선진", "향상"
 }
 GENERIC_EN = {
     "data","digital","service","services","system","systems","platform","portal","project","program","policy","policies",
@@ -681,49 +681,45 @@ def keybert_candidates_for_docs(
     ngram_range=(1, 3),
     mmr: bool = True,
     diversity: float = 0.6,
+    per_doc_topk: int = 5,
 ) -> List[Tuple[str, float]]:
     """
-    KeyBERT로 (키워드, keybert_score) 후보 쌍을 반환.
-    모델/환경 제한 시, 빈도 기반으로 (키워드, 빈도) 반환.
+    여러 문서에서 KeyBERT 후보를 뽑은 뒤,
+    전체 ICT 내에서 빈도+평균 점수 기반으로 병합.
     """
     kb = get_keybert()
     if not kb or not docs:
-        # 폴백: 빈도 기반
+        from collections import Counter
         tok = []
         for d in docs:
             for w in re.split(r"[^0-9A-Za-z가-힣]+", d or ""):
                 w = _normalize_token(w)
-                if _is_valid_kw(w):
-                    tok.append(w)
-        from collections import Counter
+                if _is_valid_kw(w): tok.append(w)
         return [(k, float(c)) for k, c in Counter(tok).most_common(top_n)]
 
-    text = "\n".join(docs)
-    kw = kb.extract_keywords(
-        text,
-        keyphrase_ngram_range=ngram_range,
-        use_mmr=mmr,
-        diversity=diversity,
-        stop_words=None,
-        top_n=max(top_n * 3, 60),  # 넉넉히 뽑고 2차 정제
-    )
-    # 정제
-    cleaned = []
-    seen = set()
-    for k, score in kw:
-        k2 = _normalize_token(k)
-        if not _is_valid_kw(k2):
-            continue
-        low = k2.lower()
-        if low in seen:
-            continue
-        seen.add(low)
-        cleaned.append((k2[:60], float(score)))
-        if len(cleaned) >= top_n * 2:
-            break
-    # keybert score 우선 정렬 후 반환
-    cleaned.sort(key=lambda x: x[1], reverse=True)
-    return cleaned[:top_n]
+    from collections import defaultdict
+    freq = defaultdict(float)
+    count = defaultdict(int)
+    for d in docs:
+        kw = kb.extract_keywords(
+            d,
+            keyphrase_ngram_range=ngram_range,
+            use_mmr=mmr,
+            diversity=diversity,
+            stop_words=None,
+            top_n=per_doc_topk,
+        )
+        for k, s in kw:
+            k2 = _normalize_token(k)
+            if not _is_valid_kw(k2): continue
+            freq[k2] += s
+            count[k2] += 1
+
+    # 평균 점수 × 출현빈도
+    merged = [(k, (freq[k]/max(1,count[k])) * (1 + math.log1p(count[k])) ) for k in freq]
+    merged.sort(key=lambda x: x[1], reverse=True)
+    return merged[:top_n]
+
 
 def _docs_texts(df_in: pd.DataFrame, text_cols: List[str]) -> List[str]:
     cols = [c for c in (text_cols or []) if c in df_in.columns]
@@ -739,7 +735,7 @@ def _docs_texts(df_in: pd.DataFrame, text_cols: List[str]) -> List[str]:
 
 
 @st.cache_resource(show_spinner=False)
-def get_sbert(model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
+def get_sbert(model_name: str = "jhgan/ko-sroberta-multitask"):
     try:
         from sentence_transformers import SentenceTransformer
         return SentenceTransformer(model_name)
@@ -1809,35 +1805,32 @@ elif mode == "ICT 유형 단일클래스":
                 # 필요 시 텍스트 컬럼 바꾸기
                 text_cols   = st.multiselect("검색할 텍스트 컬럼", options=pref_cols, default=text_cols)
         
-            # 입력 문서
+           # 입력 문서
             docs = _docs_texts(sub_wb, text_cols)
             
-            # KeyBERT 후보
+            # 🔹 문서 단위 후보 + 병합 기반 KeyBERT
             candidates = keybert_candidates_for_docs(
                 docs,
-                top_n=int(topk_auto if auto_mode else 40),
-                ngram_range=(int(ngram_min), int(ngram_max)),
-                mmr=bool(mmr),
-                diversity=float(diversity),
+                top_n=60,                # 조금 넉넉히
+                ngram_range=(2, 3),      # 2~3그램 우대
+                per_doc_topk=5,
             )
             
-            # negative set = 다른 ICT 전체
+            # 🔹 negative 대비형 재랭크
             df_negative = df[df["ICT 유형"].astype(str).str.strip() != sel].copy()
-            
-            # 대비형 재랭크(negative 사용 + n그램 가중)
             ranked = rerank_with_negative_contrast(
                 candidates=candidates,
                 df_all=df,
                 df_class=sub_wb,
                 df_negative=df_negative,
                 text_cols=text_cols,
-                w_lift=0.55, w_logodds=0.30, w_embed=0.15,
-                unigram_penalty=0.25, bigram_bonus=0.10, trigram_bonus=0.15
+                w_lift=0.6, w_logodds=0.25, w_embed=0.15,
+                unigram_penalty=0.35, bigram_bonus=0.15, trigram_bonus=0.25,
             )
             
-            # 상위 N → MMR 다양성으로 최종 추림
-            first_list = [kw for kw, *_ in ranked]
-            kw_selected = mmr_select(first_list, k=int(topk_auto), lambda_div=0.70)
+            # 🔹 MMR 다양성 선택
+            kw_selected = mmr_select([kw for kw, *_ in ranked], k=int(topk_auto), lambda_div=0.70)
+
 
 
         
@@ -2616,6 +2609,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
