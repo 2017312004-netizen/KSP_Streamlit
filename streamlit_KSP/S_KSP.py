@@ -1853,6 +1853,28 @@ else:
 st.markdown("---")
 st.subheader("키워드 트렌드 — 직접 선택 (검색 없음 · 국가/AI 키워드 제외)")
 
+# ====================== 사용자 불용어 (코드에서 직접 편집) ======================
+# ↓ 여기에 원하는 불용어를 마음껏 넣으세요 (대소문자 무시)
+STOP_CUSTOM = {
+    "높여", "기관별", "지속가능한", "공무원의", "있음", "사용자자"
+}
+STOP_CUSTOM_REGEX = [
+    # 필요하면 정규식 패턴 추가: r"^제도.?개선$", r".*계획$", ...
+]
+
+STOP_LOW_ALL = (
+    {w.lower() for w in STOP} |
+    {w.lower() for w in STOP_CUSTOM} |
+    {w.lower() for w in globals().get("BASE_STOP", set())}
+)
+
+def _blocked_by_regex(tok: str) -> bool:
+    if not STOP_CUSTOM_REGEX:
+        return False
+    low = str(tok).lower()
+    import re as _re
+    return any(_re.search(p, low) for p in STOP_CUSTOM_REGEX)
+    
 # --- 0) 도우미: 동의어/정규화 ---
 def _norm_token(x: str) -> str:
     x = re.sub(r"[\"'’“”()\[\]{}<>]", "", str(x).strip())
@@ -1875,7 +1897,8 @@ def collect_hashtag_freq(df_in: pd.DataFrame) -> Counter:
             core = re.sub(r"\s+", "", t.lower())
             if not core or len(core) < 2: 
                 continue
-            if core in STOP_LOW_ALL or _is_numericish(core):
+            # 교체 후:
+            if core in STOP_LOW_ALL or _is_numericish(core) or _blocked_by_regex(t):
                 continue
             freq[t] += 1
     return freq
@@ -1906,7 +1929,9 @@ def is_excluded_token(tok: str) -> bool:
 
 freq_all = collect_hashtag_freq(df)
 # 후보 정리(국가/AI/불용어 제외)
-candidates_all = [(k, c) for k, c in freq_all.items() if not is_excluded_token(k)]
+# 교체 후:
+candidates_all = [(k, c) for k, c in freq_all.items()
+                  if not (is_excluded_token(k) or _blocked_by_regex(k))]
 
 # 너무 적으면 완화(국가/AI/숫자만 제외)
 if len(candidates_all) < 25 and HASHTAG_COL:
@@ -1919,11 +1944,16 @@ if len(candidates_all) < 25 and HASHTAG_COL:
                 tmp[t] += 1
     for k,v in tmp.items():
         freq_all[k] = max(freq_all.get(k,0), v)
-    candidates_all = [(k, c) for k, c in freq_all.items()
-                      if k.lower() not in COUNTRY_WORDS and k.lower() not in AI_SET and not _is_numericish(k.lower())]
+            # 마지막 재계산 줄을 아래로 교체
+        candidates_all = [(k, c) for k, c in freq_all.items()
+                          if (k.lower() not in COUNTRY_WORDS)
+                          and (k.lower() not in AI_SET)
+                          and (not _is_numericish(k.lower()))
+                          and (not _blocked_by_regex(k))]
+
 
 # 상위 300개만 노출
-candidates_all = sorted(candidates_all, key=lambda x: (-x[1], x[0].lower()))[:300]
+candidates_all = sorted(candidates_all, key=lambda x: (-x[1], x[0].lower()))[:350]
 cand_labels = [k for k,_ in candidates_all]
 
 # --- 3) 체크박스 그리드 UI(검색 없음) ---
@@ -2014,6 +2044,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
