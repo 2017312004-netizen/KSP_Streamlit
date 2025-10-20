@@ -1753,6 +1753,34 @@ if all_years:
     rise_sel = rise_sel[:TOP_K_PER_FIG]
     fall_sel = fall_sel[:TOP_K_PER_FIG]
 
+    # === 여기까지 rise_sel, fall_sel 목록이 만들어진 상태 ===
+
+    # ① 원하는 목표 개수(양쪽 동일) — TOP_K_PER_FIG 사용
+    TARGET = min(TOP_K_PER_FIG, len(rise_sel), len(fall_sel))
+    
+    # ② 부족하면 랭킹으로 보충
+    #    (상승/하락 각각의 정렬 기준 이미 계산되어 있다고 가정: rise_score, fall_score)
+    rise_rank = list(rise_score.sort_values(ascending=False).index)
+    fall_rank = list(fall_score.sort_values(ascending=False).index)
+    used = set(rise_sel) | set(fall_sel)
+    
+    def fill_to(target, base_list, rank_pool):
+        out = list(base_list)
+        for k in rank_pool:
+            if len(out) >= target: break
+            if k in used: continue
+            out.append(k); used.add(k)
+        return out[:target]
+    
+    rise_sel = fill_to(TARGET, rise_sel, rise_rank)
+    fall_sel = fill_to(TARGET, fall_sel, fall_rank)
+    
+    # ③ 혹시 둘 다 너무 적을 때(데이터 희박), 두쪽의 실제 가능한 최소치로 재조정
+    TARGET = min(len(rise_sel), len(fall_sel))
+    rise_sel = rise_sel[:TARGET]
+    fall_sel = fall_sel[:TARGET]
+
+
     years_plot = win_years[-min(RECENT_YEARS*2, len(win_years)):]  # 최근 10년 내에서 10~?년 슬라이스
 
     fig_up   = plot_trend_plotly(rise_sel, years_plot, lift_all, f"상승세 — 최근 {len(years_plot)}년")
@@ -1778,123 +1806,83 @@ else:
     st.info("사업 기간에서 연도를 추출할 수 없어 키워드 상대 트렌드를 건너뜁니다.")
 
 # =====================================================================
-# 추가 시각화 ②: 대표 '주제(키워드)' 상대 트렌드(상승/하락) — Plotly
+# 사용자 선택형: 추천 키워드 20~30개 제시 → 사람이 선택 → 그 키워드만 상승/하락 시각화
 # =====================================================================
 st.markdown("---")
-st.subheader("분석 기반 키워드 상대 트렌드 (상승/하락)")
-
-THEMES = OrderedDict([
-    (r"(전자\s*조달|e[\s\-]*procure(?:ment)?|e[\s\-]*gp\b|joneps|koneps|prozorro)", "전자조달·e-Procurement"),
-    (r"(전자\s*무역|디지털\s*무역|e[\s\-]*trade|electronic\s*trade|전자\s*상거래|e[\s\-]*commerce|trade\s*facilitation)", "전자무역·e-Invoice"),
-    (r"(전자\s*세금\s*계산서|전자세금계산서|e[\s\-]*invoice|e\s*invoice|전자\s*인보이스)", "전자무역·e-Invoice"),
-    (r"(ifmis|통합\s*재정관리|재정관리\s*정보\s*시스템|government[-\s]*wide\s*fm|span\b)", "재정관리(IFMIS)"),
-    (r"(전자\s*서명|디지털\s*인증|pki|공인인증|electronic\s*signature|digital\s*certificat(?:e|ion)|"
-     r"certification\s*authority|(?:^|\W)ca(?:$|\W))", "전자서명/PKI"),
-    (r"(지식\s*재산|지식재산권|ip\b|inapi|특허|출원\s*심사|출원심사|patent|trademark|상표)", "지식재산·출원심사"),
-    (r"(데이터\s*센터|데이터센터|클라우드|cloud|gov\s*cloud|government\s*cloud|데이터\s*거버넌스|"
-     r"data\s*governance|데이터\s*플랫폼)", "데이터거버넌스·정부 클라우드"),
-    (r"(?:(?:neis|나이스|교육\s*행정\s*정보\s*시스템|학교\s*행정\s*정보\s*시스템|"
-     r"(?:^|\W)emis(?:$|\W)|education\s*management\s*information\s*system)"
-     r"|(?:e[\s\-]*health|telemedicine|ehr\b|his\b|hmis\b|"
-     r"(?:보건|건강|health)\s*(?:ict|정보|시스템|플랫폼))"
-     r"|(?:(?:livestock|축산|가축|도축|meat|nmis|traceab\w*|이력\s*추적)\s*"
-     r"(?:ict|정보|시스템|플랫폼|추적|관리)))", "NEIS교육보건·축산 ICT"),
-    (r"(관광\s*빅데이터|tourism\s*data|모바일\s*데이터\s*관광|tourism\s*analytics|관광\s*분석)", "관광 빅데이터"),
-    (r"(교육\s*ict|포용적\s*교육|스마트\s*교실|edtech|디지털\s*교재|스마트\s*교육)", "교육 ICT"),
-    (r"(내부\s*감사|내부\s*통제|it\s*통제|internal\s*audit|internal\s*control|bpkp|감사\s*체계|거버넌스\s*개선)", "행정개혁·내부통제"),
-    (r"(스마트\s*시티|smart\s*city|hydro(?:met|meteorolog)|hydro[-\s]*met|"
-     r"aws\b|automatic\s*weather\s*station|rain\s*gauge|우량(?:계)?|강우|"
-     r"수문|수문\s*관측|수위(?:계|관측)?|관측\s*네트워크|iot\s*센서|telemetry|scada)", "스마트시티·수문관측"),
-])
-
-def normalize_text(row):
-    parts = [str(row.get(c, "")) for c in ["파일명","주요 분야","요약","주요 내용","기대 효과"] if c in row.index]
-    t = " ".join(parts).lower()
-    t = re.sub(r"[“”\"'`]", "", t); t = re.sub(r"[·∙•‧･・]", " ", t); t = re.sub(r"\s+", " ", t).strip()
-    return t
-
-def detect_themes(text: str):
-    hits = set()
-    for pat, label in THEMES.items():
-        if re.search(pat, text, flags=re.I): hits.add(label)
-    return list(hits)
+st.subheader("키워드 선택형 상대 트렌드 (상승/하락)")
 
 if all_years:
-    # 테마×연도 count
-    theme_year_cnt = defaultdict(int)
-    for _, row in df.iterrows():
-        themes = detect_themes(normalize_text(row))
-        ys = years_from_span(row.get("사업 기간", ""))
-        if not themes or not ys: continue
-        for y in ys:
-            for th in themes:
-                theme_year_cnt[(th, y)] += 1
-    rows = [(th, y, c) for (th, y), c in theme_year_cnt.items()]
-    if rows:
-        cnt_df = pd.DataFrame(rows, columns=["theme","year","count"])
-        pivot_cnt = cnt_df.pivot_table(index="theme", columns="year", values="count", aggfunc="sum").fillna(0.0)
-        pivot_cnt = pivot_cnt.reindex(columns=all_years, fill_value=0.0)
-        valid = [th for th in pivot_cnt.index if pivot_cnt.loc[th].sum() >= 4 and (pivot_cnt.loc[th] > 0).sum() >= 3]
-        pivot_cnt = pivot_cnt.loc[valid]
+    # 1) 추천 후보 20~30개 생성 (총합 상위 + 최근 적중 상위의 합집합)
+    total_hits = Counter()
+    for y in all_years:
+        total_hits.update(kw_doc[y])
+    top_total = [k for k, _ in total_hits.most_common(20)]
 
-        den_year  = pd.Series(docs_per_year, dtype=float) + 2*ALPHA
-        share     = pivot_cnt.add(ALPHA, axis=0).div(den_year, axis=1) * 100.0
-        share     = share.rolling(5, axis=1, center=True, min_periods=1).mean()
+    recent_years = all_years[-min(RECENT_YEARS, len(all_years)):]
+    recent_hits = Counter()
+    for y in recent_years:
+        recent_hits.update(kw_doc[y])
+    top_recent = [k for k, _ in recent_hits.most_common(20)]
 
-        w = (docs_per_year / docs_per_year.sum()).reindex(all_years)
-        base = (share.mul(w.values, axis=1)).sum(axis=1)
-        lift = share.div(base, axis=0).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    suggestions = sorted(
+        set(top_total) | set(top_recent),
+        key=lambda k: (recent_hits[k], total_hits[k])
+    )[::-1][:30]  # 20~30개로 압축
 
-        N_plot = min(10, len(all_years))
-        years_plot = all_years[-N_plot:]
+    # 2) 사용자 선택 UI
+    default_pick = suggestions[:min(8, len(suggestions))]
+    picked = st.multiselect(
+        "시각화할 키워드를 선택하세요 (여러 개 선택 가능)",
+        options=suggestions,
+        default=default_pick,
+        key="kw_pick_user"
+    )
 
-        # 최근 기울기
-        N_slope = min(5, len(all_years))
-        yrs_slope = np.array(all_years[-N_slope:], dtype=float)
-        recent_slope = {th: np.polyfit(yrs_slope, lift.loc[th, all_years[-N_slope:]].values.astype(float), 1)[0]
-                        for th in lift.index}
-        var_lift = lift.var(axis=1, ddof=1).fillna(0.0)
-        up_sorted   = sorted([th for th in lift.index if recent_slope[th] > 0],
-                             key=lambda k: abs(recent_slope[k])*(1+var_lift[k]), reverse=True)[:8]
-        down_sorted = sorted([th for th in lift.index if recent_slope[th] < 0],
-                             key=lambda k: abs(recent_slope[k])*(1+var_lift[k]), reverse=True)[:8]
+    if picked:
+        # 3) 선택 키워드를 상승/하락으로 분할 (2-of-3 규칙 재사용)
+        sig_up   = ((last_lift >= 1.0).astype(int) + (cagr_lift > 0).astype(int) + (delta_share > 0).astype(int))
+        sig_down = ((last_lift < 1.0).astype(int)  + (cagr_lift < 0).astype(int) + (delta_share < 0).astype(int))
 
-        def plot_theme_plotly(keys, title):
-            fig = go.Figure()
-            for k in keys:
-                fig.add_trace(go.Scatter(x=years_plot, y=lift.loc[k, years_plot].values,
-                                         mode="lines+markers", name=k,
-                                         line=dict(width=3), marker=dict(size=8)))
-            fig.add_hline(y=1.0, line_width=1.5, line_dash="dash", opacity=0.6)
-            fig.update_xaxes(title_text="연도")
-            fig.update_yaxes(title_text="lift (배)")
-            return style_fig(fig, title + f" — 최근 {N_slope}년 기준")
+        picked_up   = [k for k in picked if k in sig_up.index and sig_up[k]   >= 2]
+        picked_down = [k for k in picked if k in sig_down.index and sig_down[k] >= 2]
 
+        # 4) 그래프 그리기 (선택한 것만)
         uu, vv = st.columns([1,1], gap="large")
-        fig_tu = plot_theme_plotly(up_sorted, "상승세")
-        fig_tu = style_fig(fig_tu, bg_color=VIZ_BG["theme_up"], bg_alpha=0.5)
-        fig_tu.update_layout(legend=dict(orientation="h", y=1.10, yanchor="bottom", x=0, xanchor="left"))
-        fig_tu = add_line_end_labels(fig_tu, years_plot, lift, up_sorted)
-        fig_tu = force_legend_top_padding(fig_tu, base_top=130)  # ★ 추가
-        with uu:
-            st.plotly_chart(fig_tu, use_container_width=True, config={"displayModeBar": False})
 
-        fig_td = plot_theme_plotly(down_sorted, "하락세")
-        fig_td = style_fig(fig_td, bg_color=VIZ_BG["theme_down"], bg_alpha=0.5)
-        fig_td.update_layout(legend=dict(orientation="h", y=1.10, yanchor="bottom", x=0, xanchor="left"))
-        fig_td = add_line_end_labels(fig_td, years_plot, lift, down_sorted)
-        fig_td = force_legend_top_padding(fig_td, base_top=130)  # ★ 추가
+        # 상승
+        with uu:
+            if picked_up:
+                fig_up_sel = plot_trend_plotly(picked_up, years_plot, lift_all, f"선택 키워드 — 상승세 ({len(picked_up)}개)")
+                fig_up_sel = style_fig(fig_up_sel, bg_color=VIZ_BG["trend_up"], bg_alpha=0.5)
+                fig_up_sel.update_layout(legend=dict(orientation="h", y=1.10, yanchor="bottom", x=0, xanchor="left"))
+                fig_up_sel = add_line_end_labels(fig_up_sel, years_plot, lift_all, picked_up)
+                fig_up_sel = force_legend_top_padding(fig_up_sel, base_top=130)
+                st.plotly_chart(fig_up_sel, use_container_width=True, config={"displayModeBar": False})
+            else:
+                st.info("선택한 키워드 중 상승세로 분류된 항목이 없습니다.")
+
+        # 하락
         with vv:
-            st.plotly_chart(fig_td, use_container_width=True, config={"displayModeBar": False})
+            if picked_down:
+                fig_dn_sel = plot_trend_plotly(picked_down, years_plot, lift_all, f"선택 키워드 — 하락세 ({len(picked_down)}개)")
+                fig_dn_sel = style_fig(fig_dn_sel, bg_color=VIZ_BG["trend_down"], bg_alpha=0.5)
+                fig_dn_sel.update_layout(legend=dict(orientation="h", y=1.10, yanchor="bottom", x=0, xanchor="left"))
+                fig_dn_sel = add_line_end_labels(fig_dn_sel, years_plot, lift_all, picked_down)
+                fig_dn_sel = force_legend_top_padding(fig_dn_sel, base_top=130)
+                st.plotly_chart(fig_dn_sel, use_container_width=True, config={"displayModeBar": False})
+            else:
+                st.info("선택한 키워드 중 하락세로 분류된 항목이 없습니다.")
     else:
-        st.info("텍스트에서 주제를 감지하지 못해 '주제(키워드)' 트렌드를 생략합니다.")
+        st.info("키워드를 하나 이상 선택하면 시각화가 표시됩니다.")
 else:
-    st.info("사업 기간에서 연도를 추출할 수 없어 '주제(키워드)' 트렌드를 건너뜁니다.")
+    st.info("연도 정보를 추출할 수 없어 사용자 선택형 트렌드를 표시할 수 없습니다.")
+
 
 # --------------------- 설치 / 실행 ---------------------
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
