@@ -1806,186 +1806,172 @@ else:
     st.info("사업 기간에서 연도를 추출할 수 없어 키워드 상대 트렌드를 건너뜁니다.")
 
 # =====================================================================
-# 사용자 선택형: 추천 키워드(겹침 제거) + 원클릭 프리셋 + 직접 입력 → 선택 키워드만 상승/하락 시각화
+# 키워드 트렌드 — 프리셋/원클릭(모멘텀·신규·퇴조·변동성) + 직접 입력
 # =====================================================================
 st.markdown("---")
-st.subheader("키워드 선택형 상대 트렌드 (상승/하락) — 빠른 선택 모드")
+st.subheader("키워드 트렌드 — 프리셋/원클릭")
 
 if all_years:
-    # ------ 0) 바탕 통계 ------
-    total_hits = Counter()
-    for y in all_years:
-        total_hits.update(kw_doc[y])
+    # ----- 1) 랭킹 신호 만들기: 모멘텀/신규/퇴조/변동성 -----
+    yrs = years_plot  # 최근 시각화 구간
+    x = np.array(yrs, dtype=float)
 
-    recent_years = all_years[-min(RECENT_YEARS, len(all_years)):]
-    past_years   = all_years[:-min(RECENT_YEARS, len(all_years))] if len(all_years) > len(recent_years) else []
+    # 기울기(최근 모멘텀) 계산
+    slope = {}
+    for k in lift_all.columns:
+        yk = lift_all.loc[yrs, k].astype(float).values
+        if np.all(~np.isfinite(yk)): 
+            slope[k] = 0.0
+        else:
+            yk = np.nan_to_num(yk, nan=np.nanmedian(yk))
+            try:
+                slope[k] = np.polyfit(x, yk, 1)[0]
+            except Exception:
+                slope[k] = 0.0
 
-    recent_hits = Counter()
-    for y in recent_years:
-        recent_hits.update(kw_doc[y])
+    # 등장/소멸 여부
+    recent_win = all_years[-min(RECENT_YEARS, len(all_years)):]
+    early_win  = all_years[:max(1, len(all_years)-len(recent_win))]
 
-    # 윈도/리프트 재사용
-    win_years  = all_years[-min(WINDOW_YEARS, len(all_years)):]
-    share_win  = share_all.loc[win_years] if 'share_all' in globals() else None
-    lift_win   = lift_all.loc[win_years]  if 'lift_all'  in globals() else None
+    def hits_in(years, k): return sum(kw_doc[y][k] for y in years)
+    def any_in(years, k):  return any(kw_doc[y][k] > 0 for y in years)
 
-    # AI 그래프에 이미 사용된 키워드 제외(‘새로움’ 보장)
-    used_ai = set()
-    for _arr in [globals().get("rise_sel", []), globals().get("fall_sel", [])]:
-        used_ai |= set(_arr or [])
+    newcomers = []   # 최근 등장 또는 재등장
+    faders    = []   # 예전엔 있었는데 최근 사라짐
+    for k in lift_all.columns:
+        if hits_in(recent_win, k) >= 2 and not any_in(early_win, k):
+            newcomers.append(k)
+        if any_in(early_win, k) and hits_in(recent_win, k) == 0:
+            faders.append(k)
 
-    # ------ 1) 다양한 버킷으로 추천 풀 구성 (겹침 제거) ------
-    def top_overall(n=20):
-        return [k for k,_ in total_hits.most_common(n) if k not in used_ai]
+    # 변동성(표준편차)
+    vol = lift_all.loc[yrs].std(axis=0).fillna(0.0).to_dict()
 
-    def top_recent(n=20):
-        return [k for k,_ in recent_hits.most_common(n) if k not in used_ai]
+    # 기존 점수(상승/하락 모멘텀)
+    rise_score = (last_lift - 1.0) + 0.7*(cagr_lift/100.0) + 0.5*(delta_share/100.0)
+    fall_score = (1.0 - last_lift) + 0.7*((-cagr_lift)/100.0) + 0.5*((-delta_share)/100.0)
 
-    def newcomers(n=15):
-        out=[]
-        for k in (set(total_hits.keys())-used_ai):
-            past = sum(kw_doc[y][k] for y in past_years) if past_years else 0
-            rec  = sum(kw_doc[y][k] for y in recent_years)
-            if past==0 and rec>0:
-                out.append((k, rec))
-        out.sort(key=lambda x: x[1], reverse=True)
-        return [k for k,_ in out[:n]]
+    # 버킷별 후보 (중복 제거 순위)
+    up_momentum   = [k for k in rise_score.sort_values(ascending=False).index if (last_lift.get(k,1)>=1 and slope.get(k,0)>0)]
+    down_momentum = [k for k in fall_score.sort_values(ascending=False).index if (last_lift.get(k,1)<1  and slope.get(k,0)<0)]
+    newcomers     = sorted(newcomers, key=lambda k: (hits_in(recent_win,k), slope.get(k,0)))[::-1]
+    faders        = sorted(faders,    key=lambda k: (vol.get(k,0), hits_in(early_win,k)), reverse=True)
+    high_vol      = sorted(lift_all.columns, key=lambda k: vol.get(k,0), reverse=True)
 
-    def most_volatile(n=15):
-        if lift_win is None: return []
-        var = {k: np.nanvar(lift_win[k].astype(float).values) for k in lift_win.columns if k not in used_ai}
-        return [k for k,_ in sorted(var.items(), key=lambda x:x[1], reverse=True)[:n]]
+    BUCKETS = {
+        "상승 모멘텀": up_momentum,
+        "하락 모멘텀": down_momentum,
+        "신규/재등장": newcomers,
+        "약화/퇴조":   faders,
+        "고변동":     high_vol,
+    }
 
-    def under_the_radar(n=15):
-        # 최근 상승(2-of-3)인데 전체빈도는 중위권
-        if lift_win is None: return []
-        last_lift   = lift_win.iloc[-1]
-        delta_share = (share_win.iloc[-1] - share_win.iloc[0]) if share_win is not None else pd.Series(0, index=last_lift.index)
-        cagr_lift   = pd.Series({k: ((lift_win[k].dropna().iloc[-1]/max(lift_win[k].dropna().iloc[0],1e-9))**(1/(len(lift_win[k].dropna())-1)) - 1)*100
-                                 if len(lift_win[k].dropna())>=2 else 0.0
-                                 for k in lift_win.columns})
-        sig_up = ((last_lift >= 1.0).astype(int) + (cagr_lift > 0).astype(int) + (delta_share > 0).astype(int))
-        freq_rank = {k:i for i,(k,_) in enumerate(total_hits.most_common())}
-        cand = [k for k in sig_up.index if sig_up[k]>=2 and k not in used_ai]
-        # “중위권”을 느슨히: 상위 20%와 하위 20% 제외
-        R = len(freq_rank) or 1
-        lo, hi = int(R*0.2), int(R*0.8)
-        cand = [k for k in cand if lo <= freq_rank.get(k, R) <= hi]
-        # 최근성 정렬
-        cand.sort(key=lambda k: (recent_hits[k], last_lift[k], delta_share.get(k,0)), reverse=True)
-        return cand[:n]
+    # ----- 2) UI: 프리셋 탭 / 직접 입력 탭 -----
+    tab_preset, tab_manual = st.tabs(["프리셋(원클릭)", "직접 입력"])
 
-    # 추천 후보(중복 없이 합집합 → 상위 30개 내로)
-    pool = []
-    for bucket in (top_recent(20), newcomers(15), under_the_radar(15), most_volatile(12), top_overall(20)):
-        for k in bucket:
-            if k not in pool: pool.append(k)
-    suggestions = pool[:30] if len(pool) > 30 else pool
+    # === (A) 프리셋 ===
+    with tab_preset:
+        colL, colR = st.columns([1,1])
+        with colL:
+            bucket = st.selectbox(
+                "프리셋 유형",
+                list(BUCKETS.keys()),
+                index=0,
+                help="모멘텀/신규/퇴조/변동성 등 다른 관점의 추천을 제공합니다."
+            )
+        with colR:
+            N = st.slider("표시 개수", min_value=2, max_value=30, value=10, step=1)
 
-    # ------ 2) 빠른 선택 UI ------
-    cA, cB, cC, cD, cE, cF = st.columns(6)
-    if "kw_pick_user" not in st.session_state:
-        st.session_state["kw_pick_user"] = suggestions[:min(10, len(suggestions))]
+        equalize = st.checkbox("상/하 그래프에 같은 개수로 맞추기", value=True,
+                               help="프리셋이 한쪽 성격(예: 상승)만 포함하더라도, 가능한 경우 상/하 각 N/2로 자동 맞춤")
 
-    with cA:
-        if st.button("추천 20 선택", use_container_width=True):
-            st.session_state["kw_pick_user"] = suggestions[:min(20, len(suggestions))]
-    with cB:
-        if st.button("최근 핫 15", use_container_width=True):
-            st.session_state["kw_pick_user"] = top_recent(15)
-    with cC:
-        if st.button("신규 10", use_container_width=True):
-            st.session_state["kw_pick_user"] = newcomers(10)
-    with cD:
-        if st.button("전기간 상위 15", use_container_width=True):
-            st.session_state["kw_pick_user"] = top_overall(15)
-    with cE:
-        if st.button("상승 Top 10 바로보기", use_container_width=True):
-            # 현재 창에서 즉시 그리기
-            picked_up = [k for k in lift_all.columns if k not in used_ai]
-            # 상승 점수(최근 리프트, CAGR, p.p.)로 정렬
-            last_lift_local = lift_all.loc[win_years[-min(RECENT_YEARS*2, len(win_years)):]].iloc[-1]
-            delta_share_local = (share_all.loc[win_years[-min(RECENT_YEARS*2, len(win_years)):]].iloc[-1] -
-                                 share_all.loc[win_years[-min(RECENT_YEARS*2, len(win_years)):]].iloc[0])
-            cagr_local = pd.Series({k: ((lift_all[k].dropna().iloc[-1]/max(lift_all[k].dropna().iloc[0],1e-9))**(1/(len(lift_all[k].dropna())-1)) - 1)*100
-                                    if len(lift_all[k].dropna())>=2 else 0.0
-                                    for k in lift_all.columns})
-            score = (last_lift_local-1.0) + 0.7*(cagr_local/100.0) + 0.5*(delta_share_local/100.0)
-            picked = [k for k,_ in score.sort_values(ascending=False).head(10).items()]
-            st.session_state["kw_pick_user"] = picked
-    with cF:
-        if st.button("초기화", type="secondary", use_container_width=True):
-            st.session_state["kw_pick_user"] = []
+        # 추천 목록(버킷에서 N개)
+        cand = [k for k in BUCKETS[bucket] if k in lift_all.columns][:N]
 
-    # 한 줄 입력(콤마/세미콜론/엔터 구분)
-    user_line = st.text_input("키워드를 콤마(,)로 입력/붙여넣기 (예: e-procurement, 데이터센터, PKI)")
-    if user_line.strip():
-        extra = [t.strip() for t in re.split(r"[,\n;]", user_line) if t.strip()]
-        st.session_state["kw_pick_user"] = sorted(set(st.session_state["kw_pick_user"]) | set(extra), key=str.lower)
-
-    # (선택을 보되, 길면 접기)
-    with st.expander(f"현재 선택({len(st.session_state['kw_pick_user'])}개) — 클릭해서 확인", expanded=False):
-        st.write(", ".join(st.session_state["kw_pick_user"]) if st.session_state["kw_pick_user"] else "(비어 있음)")
-
-    # 옵션: 세부 선택 조정(원하면만)
-    picked = st.multiselect(
-        "세부 조정(원치 않으면 건너뛰세요)",
-        options=suggestions,
-        default=[k for k in st.session_state["kw_pick_user"] if k in suggestions],
-        key="kw_pick_user_multisel"
-    )
-    # multiselect에서 빠진 키워드(직접 입력 등)는 유지
-    picked = sorted(set(picked) | (set(st.session_state["kw_pick_user"]) - set(suggestions)), key=str.lower)
-
-    # ------ 3) 선택 키워드 → 상승/하락 분류 및 그리기 ------
-    if picked:
-        # 2-of-3 규칙(동일): last_lift/cagr_lift/delta_share는 앞 블록 계산값 재사용
-        # 여기서도 윈도우 기준 값으로 안전하게 산출
-        years_plot = win_years[-min(RECENT_YEARS*2, len(win_years)):]
-        last_lift   = lift_all.loc[years_plot].iloc[-1]
-        delta_share = (share_all.loc[years_plot].iloc[-1] - share_all.loc[years_plot].iloc[0]) if 'share_all' in globals() else pd.Series(0, index=last_lift.index)
-        cagr_lift   = pd.Series({k: ((lift_all.loc[years_plot, k].dropna().iloc[-1]/max(lift_all.loc[years_plot, k].dropna().iloc[0],1e-9))**(1/(len(lift_all.loc[years_plot, k].dropna())-1)) - 1)*100
-                                 if len(lift_all.loc[years_plot, k].dropna())>=2 else 0.0
-                                 for k in picked})
-
+        # 선택 세트를 상/하로 분할
         sig_up   = ((last_lift >= 1.0).astype(int) + (cagr_lift > 0).astype(int) + (delta_share > 0).astype(int))
         sig_down = ((last_lift < 1.0).astype(int)  + (cagr_lift < 0).astype(int) + (delta_share < 0).astype(int))
+        picked_up   = [k for k in cand if k in sig_up.index   and sig_up[k]   >= 2]
+        picked_down = [k for k in cand if k in sig_down.index and sig_down[k] >= 2]
 
-        picked_up   = [k for k in picked if k in sig_up.index and sig_up[k]   >= 2]
-        picked_down = [k for k in picked if k in sig_down.index and sig_down[k] >= 2]
-
-        # (선택이 많아질 때 가독성) 양쪽 개수를 맞춰서 그리기 — 최대 20개씩
-        TARGET = min(20, len(picked_up), len(picked_down)) or min(20, len(picked_up)+len(picked_down))
-        picked_up   = picked_up[:TARGET] if TARGET else picked_up[:min(20, len(picked_up))]
-        picked_down = picked_down[:TARGET] if TARGET else picked_down[:min(20, len(picked_down))]
+        if equalize and picked_up and picked_down:
+            m = min(len(picked_up), len(picked_down))
+            picked_up, picked_down = picked_up[:m], picked_down[:m]
 
         uu, vv = st.columns([1,1], gap="large")
 
         with uu:
             if picked_up:
-                fig_up_sel = plot_trend_plotly(picked_up, years_plot, lift_all, f"선택 키워드 — 상승세 ({len(picked_up)}개)")
+                fig_up_sel = plot_trend_plotly(picked_up, years_plot, lift_all, f"{bucket} — 상승세 ({len(picked_up)}개)")
                 fig_up_sel = style_fig(fig_up_sel, bg_color=VIZ_BG["trend_up"], bg_alpha=0.5)
                 fig_up_sel.update_layout(legend=dict(orientation="h", y=1.10, yanchor="bottom", x=0, xanchor="left"))
                 fig_up_sel = add_line_end_labels(fig_up_sel, years_plot, lift_all, picked_up)
                 fig_up_sel = force_legend_top_padding(fig_up_sel, base_top=130)
                 st.plotly_chart(fig_up_sel, use_container_width=True, config={"displayModeBar": False})
             else:
-                st.info("선택한 키워드 중 상승세로 분류된 항목이 없습니다.")
+                st.info("이 프리셋에서 상승세로 분류된 키워드가 없습니다.")
 
         with vv:
             if picked_down:
-                fig_dn_sel = plot_trend_plotly(picked_down, years_plot, lift_all, f"선택 키워드 — 하락세 ({len(picked_down)}개)")
+                fig_dn_sel = plot_trend_plotly(picked_down, years_plot, lift_all, f"{bucket} — 하락세 ({len(picked_down)}개)")
                 fig_dn_sel = style_fig(fig_dn_sel, bg_color=VIZ_BG["trend_down"], bg_alpha=0.5)
                 fig_dn_sel.update_layout(legend=dict(orientation="h", y=1.10, yanchor="bottom", x=0, xanchor="left"))
                 fig_dn_sel = add_line_end_labels(fig_dn_sel, years_plot, lift_all, picked_down)
                 fig_dn_sel = force_legend_top_padding(fig_dn_sel, base_top=130)
                 st.plotly_chart(fig_dn_sel, use_container_width=True, config={"displayModeBar": False})
             else:
-                st.info("선택한 키워드 중 하락세로 분류된 항목이 없습니다.")
-    else:
-        st.info("버튼을 눌러 빠르게 선택하거나, 키워드를 콤마로 입력해 주세요.")
+                st.info("이 프리셋에서 하락세로 분류된 키워드가 없습니다.")
+
+    # === (B) 직접 입력 ===
+    with tab_manual:
+        st.caption("쉼표, 줄바꿈, 세미콜론 아무거나 구분자로 쓰세요. (예: e-GP, PKI, 데이터센터)")
+        manual_txt = st.text_area("키워드 직접 입력", value="", height=80, key="kw_manual_text")
+
+        def _parse_keys(s):
+            raw = re.split(r"[,\n;]+", s)
+            return [norm_token(t) for t in raw if t.strip()]
+
+        manual_keys = _parse_keys(manual_txt)
+        show_btn = st.button("그래프 그리기", type="primary")
+
+        if show_btn and manual_keys:
+            # 존재하는 토큰만 필터링
+            manual_keys = [k for k in manual_keys if k in lift_all.columns]
+            if not manual_keys:
+                st.warning("입력한 키워드가 데이터에 없습니다.")
+            else:
+                # 2-of-3 규칙으로 분할
+                sig_up   = ((last_lift >= 1.0).astype(int) + (cagr_lift > 0).astype(int) + (delta_share > 0).astype(int))
+                sig_down = ((last_lift < 1.0).astype(int)  + (cagr_lift < 0).astype(int) + (delta_share < 0).astype(int))
+                picked_up   = [k for k in manual_keys if k in sig_up.index   and sig_up[k]   >= 2]
+                picked_down = [k for k in manual_keys if k in sig_down.index and sig_down[k] >= 2]
+
+                uu, vv = st.columns([1,1], gap="large")
+                with uu:
+                    if picked_up:
+                        fig_u = plot_trend_plotly(picked_up, years_plot, lift_all, f"직접 입력 — 상승세 ({len(picked_up)}개)")
+                        fig_u = style_fig(fig_u, bg_color=VIZ_BG["trend_up"], bg_alpha=0.5)
+                        fig_u.update_layout(legend=dict(orientation="h", y=1.10, yanchor="bottom", x=0, xanchor="left"))
+                        fig_u = add_line_end_labels(fig_u, years_plot, lift_all, picked_up)
+                        fig_u = force_legend_top_padding(fig_u, base_top=130)
+                        st.plotly_chart(fig_u, use_container_width=True, config={"displayModeBar": False})
+                    else:
+                        st.info("직접 입력한 키워드 중 상승세 항목이 없습니다.")
+
+                with vv:
+                    if picked_down:
+                        fig_d = plot_trend_plotly(picked_down, years_plot, lift_all, f"직접 입력 — 하락세 ({len(picked_down)}개)")
+                        fig_d = style_fig(fig_d, bg_color=VIZ_BG["trend_down"], bg_alpha=0.5)
+                        fig_d.update_layout(legend=dict(orientation="h", y=1.10, yanchor="bottom", x=0, xanchor="left"))
+                        fig_d = add_line_end_labels(fig_d, years_plot, lift_all, picked_down)
+                        fig_d = force_legend_top_padding(fig_d, base_top=130)
+                        st.plotly_chart(fig_d, use_container_width=True, config={"displayModeBar": False})
+                    else:
+                        st.info("직접 입력한 키워드 중 하락세 항목이 없습니다.")
+        elif show_btn and not manual_keys:
+            st.warning("키워드를 1개 이상 입력해 주세요.")
 else:
-    st.info("연도 정보를 추출할 수 없어 사용자 선택형 트렌드를 표시할 수 없습니다.")
+    st.info("연도 정보를 추출할 수 없어 트렌드를 표시할 수 없습니다.")
 
 
 
@@ -1993,6 +1979,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
