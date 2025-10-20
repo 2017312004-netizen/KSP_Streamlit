@@ -18,6 +18,3 @@ transformers==4.44.2
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.2.2+cpu
 
-# 한국어 형태소
-kiwipiepy==0.20.0
-kiwipiepy-model==0.20.0
