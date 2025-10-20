@@ -147,7 +147,7 @@ STOP = {
     "핵심", "수동", "지연", "그리고", "또한", "보고서입니다", "겪고", "인해", "현재", "다니는", "다룬다", "중심으로", "가능한", "한다", "위치", "부문의", "가장", "온두라스의", "운영을", "센터", "특히", "참여를", "등록", "초점을", "지원을", "제시했습니다", "행정의",
     "접근성을", "발생하는", "수립합니다", "제시합니다", "성공적인", "효율적인", "전환을", "대응", "자문을", "합니다", "기술을", "서비스에", "등의", "주요", "분절된", "시스템은", "기능이", "세르비아의", "방글라데시의", "강화하기", "체계적인", "문제를", "지원합니다", "높이는", "기본", "단지의", "산업의",
     "미흡한", "시스템이", "비롯한", "다각화와", "타지키스탄은", "타지키스탄의", "정보", "이에", "따라", "실정입니다", "데이터의", "데이터를", "공유하고", "것입니다", "궁극적으로", "기여할", "정확성을", "자동화하여", "수립의", "공유를", "융합하여", "부문을", "지속", "달성하도록", "성장을", "돕는", "산업과",
-    "경제에서", "경제로", "전환하고자", "그러나" ,"부문은", "부족으로", "잠재력을", "충분히", "활용하지", "못하고", "호주는", "호주의", "분야에서", "인도네시아는", "문제점을", "효율성을", "것으로", "지역의", "벤치마킹하여", "절"
+    "경제에서", "경제로", "전환하고자", "그러나" ,"부문은", "부족으로", "잠재력을", "충분히", "활용하지", "못하고", "호주는", "호주의", "분야에서", "인도네시아는", "문제점을", "효율성을", "것으로", "지역의", "벤치마킹하여"
 }
 STOP_LOW = {w.lower() for w in STOP}
 
@@ -477,97 +477,85 @@ COLOR_SUBJ = make_color_map(SUBJ_ORDER)
 def _font_path_safe():
     return GLOBAL_FONT_PATH or find_korean_font()  # 둘 다 없으면 None
 
-SENT_SPLIT_RE = re.compile(r"(?<=[\.!\?]|[。！？]|[…]|[;]|[ㆍ]|[·]|[·\s]|[”’\"\'])\s+|(?<=[\.\?])(?=[가-힣A-Za-z0-9])")
-KOR_END = "다다요요함음임니까니가라를에에서의으로로다되었으며했고하며"
 
-def split_sentences(txt: str, max_len: int = 500) -> list[str]:
-    """한국어/영문 혼합 문장 분할 + 과도하게 긴 문장 자르기"""
-    if not isinstance(txt, str) or not txt.strip():
-        return []
-    # 1차 분할
-    parts = re.split(r'(?<=[\.!\?])\s+|[。]|[！]|[？]|\n+', txt)
-    out = []
-    for p in parts:
-        p = p.strip()
-        if not p: 
-            continue
-        # 너무 길면 키워드 매칭 전에 2차 분할 시도
-        if len(p) > max_len:
-            chunks = re.split(r'[,;·]|(?<=\))\s+|(?<=\])\s+', p)
-            for c in chunks:
-                c = c.strip()
-                if 30 <= len(c) <= max_len:
-                    out.append(c)
-        else:
-            out.append(p)
-    return [s for s in out if len(s) >= 20]
-
-def shorten_around_keyword(sent: str, kw: str, half: int = 140) -> str:
-    """키워드 기준 좌우로 문맥만 남겨 280자 내로 축약"""
-    i = sent.lower().find(kw.lower())
-    if i < 0:
-        return sent[:280] + ("…" if len(sent) > 280 else "")
-    left = max(0, i - half)
-    right = min(len(sent), i + len(kw) + half)
-    clip = (("…" if left > 0 else "") + sent[left:right] + ("…" if right < len(sent) else ""))
-    return clip
-
-def highlight(text: str, kw: str) -> str:
-    pat = re.compile(re.escape(kw), re.IGNORECASE)
-    return pat.sub(lambda m: f"<mark style='background:#fff3a1; padding:0 2px; border-radius:4px'>{m.group(0)}</mark>", text)
-
-# === 교체: sample_sentences_for_keyword ===
-def sample_sentences_for_keyword(df_in: pd.DataFrame, kw: str, text_cols: list[str], 
-                                 per_kw: int = 3, seed: int = 42) -> list[tuple[str, str]]:
+# ================= KeyBERT 준비/키워드 추출 유틸 =================
+@st.cache_resource(show_spinner=False)
+def get_keybert(model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
     """
-    kw를 포함하는 문장을 최대 per_kw개 샘플링.
-    반환: [(파일명, 문장_HTML), ...]
+    - 한국어/영문 모두 안정적인 멀티링구얼 경량 모델.
+    - 최초 1회 다운로드 후 캐시됨.
     """
-    # ✔ 지역 임포트로 NameError 방지
-    from random import Random
-
-    # ✔ 시드 캐스팅(숫자/문자 상관없이 안전)
     try:
-        base_seed = int(seed)
-    except Exception:
-        base_seed = 42
+        from keybert import KeyBERT
+        from sentence_transformers import SentenceTransformer
+        emb = SentenceTransformer(model_name)
+        return KeyBERT(model=emb)
+    except Exception as e:
+        return None  # 환경 제한 시 폴백 사용
 
-    rng = Random(base_seed + (hash(str(kw)) % 10000))
+def _normalize_token(t: str) -> str:
+    t = re.sub(r"[\"'’“”()\[\]{}<>]", "", str(t)).strip()
+    t = re.sub(r"\s{2,}", " ", t)
+    return t
 
-    texts = []
-    cols = [c for c in text_cols if c in df_in.columns]
-    if not cols:
-        return []
+def _is_valid_kw(t: str) -> bool:
+    if not t or len(t) < 2: return False
+    if re.fullmatch(r"\d+(\.\d+)?", t): return False
+    return (t.lower() not in STOP_LOW)
 
-    for _, row in df_in.iterrows():
-        blob = " ".join(str(row.get(c, "") or "") for c in cols).strip()
-        if not blob:
+def keybert_keywords_for_docs(
+    docs: list[str],
+    top_n: int = 10,
+    ngram_range=(1, 3),
+    mmr: bool = True,
+    diversity: float = 0.6,
+) -> list[str]:
+    """
+    docs: 텍스트 리스트(해당 ICT 유형의 요약/본문/풀텍스트 등)
+    top_n: 최종 키워드 개수
+    ngram_range: 1~3그램 조합
+    mmr/diversity: 다양성 조절
+    """
+    kb = get_keybert()
+    if not kb or not docs:
+        # 폴백: 빈도 기반
+        tok = []
+        for d in docs:
+            for w in re.split(r"[^0-9A-Za-z가-힣]+", d or ""):
+                w = _normalize_token(w)
+                if _is_valid_kw(w):
+                    tok.append(w)
+        from collections import Counter
+        return [k for k, _ in Counter(tok).most_common(top_n)]
+
+    text = "\n".join(docs)
+    kw = kb.extract_keywords(
+        text,
+        keyphrase_ngram_range=ngram_range,
+        use_mmr=mmr,
+        diversity=diversity,
+        stop_words=None,  # 한/영 혼합 → 우리가 직접 필터
+        top_n=max(top_n * 3, 30),  # 넉넉히 뽑아 2차 정제
+    )
+    # kw: [(key, score), ...]
+    cleaned = []
+    seen = set()
+    for k, score in kw:
+        k2 = _normalize_token(k)
+        if not _is_valid_kw(k2):
             continue
-        sents = split_sentences(blob)
-        hits = [s for s in sents if kw.lower() in s.lower()]
-        if hits:
-            fname = str(row.get("파일명") or row.get("Filename") or "").strip()
-            rng.shuffle(hits)
-            for s in hits[:per_kw * 2]:   # 약간 넉넉히 가져와 중복 제거/축약 후 선택
-                texts.append((fname, s))
-
-    # 중복 제거
-    seen, uniq = set(), []
-    for fn, s in texts:
-        key = (fn, s.strip().lower())
-        if key in seen:
+        k2 = k2[:60]
+        low = k2.lower()
+        if low in seen:
             continue
-        seen.add(key)
-        uniq.append((fn, s))
+        seen.add(low)
+        cleaned.append((k2, float(score)))
+        if len(cleaned) >= top_n * 2:
+            break
 
-    # 최종 샘플
-    rng.shuffle(uniq)
-    uniq = uniq[:per_kw]
-
-    out = []
-    for fn, s in uniq:
-        clip = shorten_around_keyword(s, kw, half=140)
-        out.append((fn, highlight(clip, kw)))
+    # 스코어 순 + 길이 가산(과한 단어는 억제)
+    cleaned.sort(key=lambda x: (x[1], min(len(x[0]), 20) / 20.0), reverse=True)
+    out = [k for k, _ in cleaned[:top_n]]
     return out
 
 
@@ -1500,75 +1488,67 @@ elif mode == "ICT 유형 단일클래스":
             else:
                 st.info("표시할 키워드가 부족합니다.")
         with tab_extract:
-            st.markdown("#### 대표 키워드 문장 발췌")
+            st.markdown("#### 대표 키워드 문장 발췌 (임베딩 기반 · KeyBERT)")
         
-            # (1) 텍스트 컬럼 자동 선택 (우선순위: full_text > 주요 내용 > 요약)
+            # (1) 텍스트 컬럼 자동 선택 (full_text > 주요 내용 > 요약)
             pref_cols = ["full_text", "주요 내용", "요약"]
             text_cols = [c for c in pref_cols if c in sub_wb.columns]
             if not text_cols:
                 st.info("문장 발췌에 사용할 텍스트 컬럼이 없습니다. (full_text/주요 내용/요약 중 하나 필요)")
                 st.stop()
         
-            # (2) UI 최소화 — 자동 모드 토글
-            auto_mode = st.toggle("자동 발췌 모드", value=True, help="상위 키워드 자동 선정 및 문장 발췌")
-            # 가벼운 고급 옵션(접힘)
+            # (2) 최소 UI — 기본은 '자동 발췌'
+            auto_mode = st.toggle("자동 발췌 (KeyBERT)", value=True, help="해당 ICT 유형을 대표하는 키워드를 임베딩 기반으로 자동 추출")
             with st.expander("고급 옵션", expanded=False):
-                default_topk = st.number_input("키워드 상위 N", min_value=3, max_value=20, value=8, step=1)
-                default_per_kw = st.number_input("키워드별 문장 수", min_value=1, max_value=5, value=2, step=1)
-                seed = st.number_input("무작위 시드", min_value=0, value=42, step=1)
-                # 필요 시 텍스트 컬럼 변경 허용
-                text_cols = st.multiselect("검색할 텍스트 컬럼", options=pref_cols, default=text_cols)
+                topk_auto   = st.number_input("대표 키워드 개수 (자동모드)", min_value=3, max_value=20, value=8, step=1)
+                per_kw      = st.number_input("키워드별 문장 수", min_value=1, max_value=5, value=2, step=1)
+                seed        = st.number_input("무작위 시드", min_value=0, value=42, step=1)
+                ngram_min   = st.selectbox("최소 n그램", [1,2], index=0)
+                ngram_max   = st.selectbox("최대 n그램", [1,2,3], index=2)
+                mmr         = st.checkbox("MMR 다양성", value=True)
+                diversity   = st.slider("다양성(0~1)", 0.0, 1.0, 0.6, 0.05)
+                # 필요 시 텍스트 컬럼 바꾸기
+                text_cols   = st.multiselect("검색할 텍스트 컬럼", options=pref_cols, default=text_cols)
         
-            # (3) 키워드 후보 계산 (워드클라우드와 동일한 필터링)
-            tokens = []
-            if "Hashtag_str" in sub_wb.columns and sub_wb["Hashtag_str"].notna().any():
-                for txt in sub_wb["Hashtag_str"].dropna().astype(str):
-                    tokens += [z.strip() for z in re.split(r"[;,]", txt) if z.strip()]
-            elif "Hashtag" in sub_wb.columns and sub_wb["Hashtag"].notna().any():
-                for txt in sub_wb["Hashtag"].dropna().astype(str):
-                    tokens += [z.strip() for z in re.split(r"[;,]", txt) if z.strip()]
+            # (3) 입력 문서 만들기(해당 ICT 유형의 텍스트만)
+            docs = []
+            for _, r in sub_wb.iterrows():
+                blob = " ".join(str(r.get(c, "") or "") for c in text_cols).strip()
+                if blob:
+                    docs.append(blob)
         
-            pool_cols_wc = [c for c in ["요약", "주요 내용"] if c in sub_wb.columns]
-            if pool_cols_wc:
-                for txt in sub_wb[pool_cols_wc].fillna("").astype(str).agg(" ".join, axis=1).tolist():
-                    for w in re.split(r"[^0-9A-Za-z가-힣]+", txt):
-                        w = w.strip()
-                        if len(w) >= 2:
-                            tokens.append(w)
-        
-            tokens = [w for w in tokens if w and w.lower() not in STOP_LOW and not re.fullmatch(r"\d+(\.\d+)?", w)]
-            kw_freq = Counter(tokens)
-        
-            # (4) 자동 모드: 상위 N개 바로 사용 / 수동 모드: 콤팩트 드롭다운 1개만
+            # (4) 대표 키워드 선정
             if auto_mode:
-                kw_selected = [k for k, _ in kw_freq.most_common(int(default_topk))]
-                per_kw = int(default_per_kw)
+                kw_selected = keybert_keywords_for_docs(
+                    docs,
+                    top_n=int(topk_auto),
+                    ngram_range=(int(ngram_min), int(ngram_max)),
+                    mmr=bool(mmr),
+                    diversity=float(diversity),
+                )
             else:
-                # 수동이라도 '태그 클라우드 같은 UI'는 피하고 간단 드롭다운만
-                all_kws = [k for k, _ in kw_freq.most_common(200)]
-                kw_selected = st.multiselect("키워드 선택(최대 12개)", options=all_kws, default=all_kws[:6], max_selections=12)
-                per_kw = int(default_per_kw)
+                # 수동모드(간단 드롭다운만): KeyBERT 후보 30개 제시 후 선택
+                candidates = keybert_keywords_for_docs(docs, top_n=30)
+                kw_selected = st.multiselect("대표 키워드 선택", options=candidates, default=candidates[:8], max_selections=12)
+                per_kw = int(per_kw)
         
+            # (5) 렌더
             if not kw_selected:
                 st.info("선택된 키워드가 없습니다.")
             else:
                 st.markdown("<style>.ksp-quote{background:var(--card);border:1px solid var(--border);padding:10px;border-radius:10px;margin:6px 0}</style>", unsafe_allow_html=True)
-        
-                # 1열~2열 자동 레이아웃
                 cols = st.columns(2, gap="large") if len(kw_selected) >= 6 else [st.container()]
-        
                 for i, kw in enumerate(kw_selected):
                     target_col = cols[i % len(cols)]
                     with target_col:
                         st.markdown(f"**🔎 {kw}**")
-                        sents = sample_sentences_for_keyword(sub_wb, kw, text_cols, per_kw=per_kw, seed=int(seed))
+                        sents = sample_sentences_for_keyword(sub_wb, kw, text_cols, per_kw=int(per_kw), seed=int(seed))
                         if not sents:
                             st.caption("· 일치 문장을 찾지 못했습니다.")
                         else:
                             for fn, html_sent in sents:
                                 meta = f"<div style='font-size:12px;color:#6b7280'>{fn}</div>" if fn else ""
                                 st.markdown(f"<div class='ksp-quote'>{html_sent}{meta}</div>", unsafe_allow_html=True)
-
 
 
     # ---- (4) 테이블: 클래스 전체 보고서 목록 ----
@@ -2327,6 +2307,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
