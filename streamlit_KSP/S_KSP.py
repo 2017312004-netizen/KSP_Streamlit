@@ -10,11 +10,14 @@
 # - FIX: with/else 들여쓰기 정리, 블록 사이에 코드 삽입으로 인한 SyntaxError 해결
 # ===============================================
 import os, io, re, json, urllib.request, hashlib, pathlib, copy, colorsys
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "True")
 from typing import List, Dict, Tuple, Optional
 from collections import Counter, defaultdict, OrderedDict
 import urllib.request
 from pathlib import Path
-import numpy as np
+import traceback, platform, numpy as np
 import pandas as pd
 from PIL import Image
 import itertools
@@ -589,25 +592,34 @@ def get_keybert(model_name: str = "intfloat/multilingual-e5-large"):
     except Exception as e:
         return None  # 환경 제한 시 폴백 사용
 
+# ✅ 가드 임포트 (딱 한 곳만)
+try:
+    from kiwipiepy import Kiwi
+    _KIWI_AVAILABLE = True
+except Exception:
+    Kiwi = None
+    _KIWI_AVAILABLE = False
 
+@st.cache_resource(show_spinner=False)
+def get_kiwi():
+    return Kiwi() if _KIWI_AVAILABLE else None
 
     
+
 USE_KIWI_NOUN_FILTER = True
 
 def extract_nouns_korean(text: str) -> str:
-    """
-    Kiwi가 없으면 원문을 그대로 반환(=필터 OFF)해서 앱이 죽지 않도록.
-    """
-
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    kiwi = get_kiwi()
     if kiwi is None:
-        return text  # graceful fallback
+        return text  # 설치 안 되어도 죽지 않음
     nouns = []
     for tok in kiwi.tokenize(text):
         if tok.tag in ("NNG", "NNP") or tok.tag == "SL":
             nouns.append(tok.form)
     return " ".join(nouns)
-    
-# 2️⃣ ✅ 여기에 _prep_docs 함수 넣기
+
 def _prep_docs(df_in: pd.DataFrame, text_cols: list[str]) -> list[str]:
     cols = [c for c in (text_cols or []) if c in df_in.columns]
     out = []
@@ -619,6 +631,7 @@ def _prep_docs(df_in: pd.DataFrame, text_cols: list[str]) -> list[str]:
             t = extract_nouns_korean(t)
         out.append(t)
     return out
+
 
 # ===== 강한 stop/필터 =====
 GENERIC_KO = {
@@ -2637,6 +2650,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
