@@ -477,6 +477,100 @@ COLOR_SUBJ = make_color_map(SUBJ_ORDER)
 def _font_path_safe():
     return GLOBAL_FONT_PATH or find_korean_font()  # 둘 다 없으면 None
 
+SENT_SPLIT_RE = re.compile(r"(?<=[\.!\?]|[。！？]|[…]|[;]|[ㆍ]|[·]|[·\s]|[”’\"\'])\s+|(?<=[\.\?])(?=[가-힣A-Za-z0-9])")
+KOR_END = "다다요요함음임니까니가라를에에서의으로로다되었으며했고하며"
+
+def split_sentences(txt: str, max_len: int = 500) -> list[str]:
+    """한국어/영문 혼합 문장 분할 + 과도하게 긴 문장 자르기"""
+    if not isinstance(txt, str) or not txt.strip():
+        return []
+    # 1차 분할
+    parts = re.split(r'(?<=[\.!\?])\s+|[。]|[！]|[？]|\n+', txt)
+    out = []
+    for p in parts:
+        p = p.strip()
+        if not p: 
+            continue
+        # 너무 길면 키워드 매칭 전에 2차 분할 시도
+        if len(p) > max_len:
+            chunks = re.split(r'[,;·]|(?<=\))\s+|(?<=\])\s+', p)
+            for c in chunks:
+                c = c.strip()
+                if 30 <= len(c) <= max_len:
+                    out.append(c)
+        else:
+            out.append(p)
+    return [s for s in out if len(s) >= 20]
+
+def shorten_around_keyword(sent: str, kw: str, half: int = 140) -> str:
+    """키워드 기준 좌우로 문맥만 남겨 280자 내로 축약"""
+    i = sent.lower().find(kw.lower())
+    if i < 0:
+        return sent[:280] + ("…" if len(sent) > 280 else "")
+    left = max(0, i - half)
+    right = min(len(sent), i + len(kw) + half)
+    clip = (("…" if left > 0 else "") + sent[left:right] + ("…" if right < len(sent) else ""))
+    return clip
+
+def highlight(text: str, kw: str) -> str:
+    pat = re.compile(re.escape(kw), re.IGNORECASE)
+    return pat.sub(lambda m: f"<mark style='background:#fff3a1; padding:0 2px; border-radius:4px'>{m.group(0)}</mark>", text)
+
+# === 교체: sample_sentences_for_keyword ===
+def sample_sentences_for_keyword(df_in: pd.DataFrame, kw: str, text_cols: list[str], 
+                                 per_kw: int = 3, seed: int = 42) -> list[tuple[str, str]]:
+    """
+    kw를 포함하는 문장을 최대 per_kw개 샘플링.
+    반환: [(파일명, 문장_HTML), ...]
+    """
+    # ✔ 지역 임포트로 NameError 방지
+    from random import Random
+
+    # ✔ 시드 캐스팅(숫자/문자 상관없이 안전)
+    try:
+        base_seed = int(seed)
+    except Exception:
+        base_seed = 42
+
+    rng = Random(base_seed + (hash(str(kw)) % 10000))
+
+    texts = []
+    cols = [c for c in text_cols if c in df_in.columns]
+    if not cols:
+        return []
+
+    for _, row in df_in.iterrows():
+        blob = " ".join(str(row.get(c, "") or "") for c in cols).strip()
+        if not blob:
+            continue
+        sents = split_sentences(blob)
+        hits = [s for s in sents if kw.lower() in s.lower()]
+        if hits:
+            fname = str(row.get("파일명") or row.get("Filename") or "").strip()
+            rng.shuffle(hits)
+            for s in hits[:per_kw * 2]:   # 약간 넉넉히 가져와 중복 제거/축약 후 선택
+                texts.append((fname, s))
+
+    # 중복 제거
+    seen, uniq = set(), []
+    for fn, s in texts:
+        key = (fn, s.strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append((fn, s))
+
+    # 최종 샘플
+    rng.shuffle(uniq)
+    uniq = uniq[:per_kw]
+
+    out = []
+    for fn, s in uniq:
+        clip = shorten_around_keyword(s, kw, half=140)
+        out.append((fn, highlight(clip, kw)))
+    return out
+
+
 
 # ================= KeyBERT 준비/키워드 추출 유틸 =================
 @st.cache_resource(show_spinner=False)
@@ -2307,6 +2401,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
