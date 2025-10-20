@@ -9,8 +9,8 @@
 # - 불필요한 슬라이더/옵션 제거: 워드클라우드 소스 고정, Top-K 조절/Jeffreys+롤링 윈도 조절 제거
 # - FIX: with/else 들여쓰기 정리, 블록 사이에 코드 삽입으로 인한 SyntaxError 해결
 # ===============================================
-import os, io, re, json, urllib.request, hashlib, pathlib, copy
-from typing import List, Dict, Tuple
+import os, io, re, json, urllib.request, hashlib, pathlib, copy, colorsys
+from typing import List, Dict, Tuple, Optional
 from collections import Counter, defaultdict, OrderedDict
 import urllib.request
 from pathlib import Path
@@ -402,53 +402,81 @@ with st.expander("데이터 미리보기 / 진단", expanded=False):
 # ========================= 전역 컬러 팔레트 =========================
 
 
-# 1) 라벨 순서(카테고리 순서) 고정
-def ordered_with_misc_last(values, misc=("미분류", "기타", "기타/미분류")):
-    vals = [str(v).strip() for v in values if str(v).strip()]
-    uniq = []
-    for v in vals:
-        if v not in uniq:
-            uniq.append(v)
-    front = [v for v in uniq if v not in misc]
-    back  = [v for v in uniq if v in misc]
-    return front + back
+def _parse_color_to_rgb01(c: str) -> Optional[Tuple[float, float, float]]:
+    """
+    다양한 표현의 색을 0..1 RGB로 파싱:
+    - '#rrggbb' / '#rgb'
+    - 'rgb(r,g,b)' / 'rgba(r,g,b,a)'
+    - (가능하면) named color -> matplotlib.colors.to_rgb
+    실패하면 None
+    """
+    if not isinstance(c, str):
+        return None
+    s = c.strip()
 
-WB_ORDER   = ordered_with_misc_last(df["ICT 유형"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류").tolist())
-SUBJ_ORDER = ordered_with_misc_last(df["주제분류(대)"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류").tolist())
+    # HEX: #rgb 또는 #rrggbb
+    if s.startswith("#"):
+        h = s[1:]
+        if len(h) == 3:
+            h = "".join(ch * 2 for ch in h)
+        if len(h) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in h):
+            r = int(h[0:2], 16) / 255.0
+            g = int(h[2:4], 16) / 255.0
+            b = int(h[4:6], 16) / 255.0
+            return (r, g, b)
+        return None
 
-# 2) Plotly 기본 팔레트 조합
-_BASE_QUALS = (
-    px.colors.qualitative.Set1
-    + px.colors.qualitative.Set2
-    + px.colors.qualitative.Set3
-    + px.colors.qualitative.Dark24
-    + px.colors.qualitative.Bold
-    + px.colors.qualitative.Vivid
-)
+    # rgb()/rgba()
+    if s.lower().startswith("rgb"):
+        nums = re.findall(r"[\d\.]+", s)
+        if len(nums) >= 3:
+            r, g, b = [float(nums[i]) for i in range(3)]
+            # 0..255 또는 0..1 둘 다 허용
+            if max(r, g, b) > 1.0:
+                r, g, b = r/255.0, g/255.0, b/255.0
+            return (max(0,min(1,r)), max(0,min(1,g)), max(0,min(1,b)))
 
-# 3) 색상 보정 함수 (채도↑, 명도 조정)
-def _brighten_color(c: str, s_scale=1.25, l_shift=-0.05):
-    """HEX 색상을 HLS 공간에서 보정해 더 선명하게 반환"""
-    c = c.strip("#")
-    r, g, b = tuple(int(c[i:i+2], 16) / 255.0 for i in (0, 2, 4))
-    h, l, s = colorsys.rgb_to_hls(r, g, b)
-    s = min(1, s * s_scale)        # 채도 증가
-    l = min(1, max(0, l + l_shift)) # 명도 조정
+    # 이름 색상 등 (가능하면 matplotlib)
+    try:
+        from matplotlib.colors import to_rgb
+        r, g, b = to_rgb(s)  # 이미 0..1
+        return (r, g, b)
+    except Exception:
+        return None
+
+def _to_hex_from_rgb01(rgb: Tuple[float, float, float]) -> str:
+    r, g, b = [int(max(0, min(1, v)) * 255 + 0.5) for v in rgb]
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+def _brighten_color(c: str, s_scale=1.35, l_shift=-0.05) -> str:
+    """
+    색을 HLS 공간에서 선명하게 보정.
+    - s_scale: 채도 배수 (1.1~1.5 권장)
+    - l_shift: 명도 가감 (-0.08~+0.08 권장)
+    파싱 실패 시 원본 색상 그대로 반환.
+    """
+    rgb = _parse_color_to_rgb01(c)
+    if rgb is None:
+        return c  # 원본 유지(에러 방지)
+
+    h, l, s = colorsys.rgb_to_hls(*rgb)
+    s = min(1.0, s * s_scale)
+    l = min(1.0, max(0.0, l + l_shift))
     r2, g2, b2 = colorsys.hls_to_rgb(h, l, s)
-    return f"#{int(r2*255):02x}{int(g2*255):02x}{int(b2*255):02x}"
+    return _to_hex_from_rgb01((r2, g2, b2))
 
-def make_color_map(names, base_colors=_BASE_QUALS):
+def make_color_map(names, base_colors=_BASE_QUALS, s_scale=1.35, l_shift=-0.05):
     cycle = itertools.cycle(base_colors)
     cmap = {}
     for n in names:
         if n not in cmap:
             raw = next(cycle)
-            cmap[n] = _brighten_color(raw, s_scale=1.35, l_shift=-0.05)
+            cmap[n] = _brighten_color(raw, s_scale=s_scale, l_shift=l_shift)
     return cmap
 
+# 재생성
 COLOR_WB   = make_color_map(WB_ORDER)
 COLOR_SUBJ = make_color_map(SUBJ_ORDER)
-
 
 def _font_path_safe():
     return GLOBAL_FONT_PATH or find_korean_font()  # 둘 다 없으면 None
@@ -2277,6 +2305,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
