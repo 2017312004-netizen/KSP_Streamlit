@@ -589,17 +589,8 @@ def get_keybert(model_name: str = "intfloat/multilingual-e5-large"):
     except Exception as e:
         return None  # 환경 제한 시 폴백 사용
 
-# --- at top-level (기존 import 위치 대체) ---
-try:
-    from kiwipiepy import Kiwi
-    _KIWI_AVAILABLE = True
-except Exception:
-    Kiwi = None
-    _KIWI_AVAILABLE = False
 
-@st.cache_resource(show_spinner=False)
-def get_kiwi():
-    return Kiwi() if _KIWI_AVAILABLE else None
+
     
 USE_KIWI_NOUN_FILTER = True
 
@@ -607,9 +598,7 @@ def extract_nouns_korean(text: str) -> str:
     """
     Kiwi가 없으면 원문을 그대로 반환(=필터 OFF)해서 앱이 죽지 않도록.
     """
-    if not isinstance(text, str) or not text.strip():
-        return ""
-    kiwi = get_kiwi()
+
     if kiwi is None:
         return text  # graceful fallback
     nouns = []
@@ -2648,6 +2637,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
