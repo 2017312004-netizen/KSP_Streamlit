@@ -597,7 +597,7 @@ GENERIC_KO = {
     "과학기술","교육","보건","안전","보안","전자정부","스마트","혁신","연구","중소기업","산업","도시","센터","플렛폼",
     "현안","자료","분야","지원기관","대상기관","주제분류","ict","ICT","AI","인공지능","빅데이터","클라우드", "기대됩니다",
     "생산성", "IT", "대한", "자원", "투자", "디지털화", "무역", "법정", "재정", "정보화", "법적", "인력", "민간", "맞춤형", "행정", "비즈니스", "제조업", "건설", "광업", "BIM", "에너지", "불가리아", "지속가능한", "IP", "중남미", "공장", "양성", "우즈베키스탄", "높이고", "이러한", "유치", "전문",
-    "정책적", "촉진할", "성공", "루마니아", "특허", "상황입니다", "검토하여", "환경", "생태계", "온두라스", "구축하여", "거버넌스", "필리핀", "시범", "심사", "업무", "데이터베이스", "온라인", "있으며"
+    "정책적", "촉진할", "성공", "루마니아", "특허", "상황입니다", "검토하여", "환경", "생태계", "온두라스", "구축하여", "거버넌스", "필리핀", "시범", "심사", "업무", "데이터베이스", "온라인", "있으며", "산학연"
 }
 GENERIC_EN = {
     "data","digital","service","services","system","systems","platform","portal","project","program","policy","policies",
@@ -2615,6 +2615,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
