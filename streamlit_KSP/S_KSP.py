@@ -651,7 +651,111 @@ def keybert_keywords_for_docs(
     cleaned.sort(key=lambda x: (x[1], min(len(x[0]), 20) / 20.0), reverse=True)
     out = [k for k, _ in cleaned[:top_n]]
     return out
+def keybert_candidates_for_docs(
+    docs: List[str],
+    top_n: int = 30,
+    ngram_range=(1, 3),
+    mmr: bool = True,
+    diversity: float = 0.6,
+) -> List[Tuple[str, float]]:
+    """
+    KeyBERT로 (키워드, keybert_score) 후보 쌍을 반환.
+    모델/환경 제한 시, 빈도 기반으로 (키워드, 빈도) 반환.
+    """
+    kb = get_keybert()
+    if not kb or not docs:
+        # 폴백: 빈도 기반
+        tok = []
+        for d in docs:
+            for w in re.split(r"[^0-9A-Za-z가-힣]+", d or ""):
+                w = _normalize_token(w)
+                if _is_valid_kw(w):
+                    tok.append(w)
+        from collections import Counter
+        return [(k, float(c)) for k, c in Counter(tok).most_common(top_n)]
 
+    text = "\n".join(docs)
+    kw = kb.extract_keywords(
+        text,
+        keyphrase_ngram_range=ngram_range,
+        use_mmr=mmr,
+        diversity=diversity,
+        stop_words=None,
+        top_n=max(top_n * 3, 60),  # 넉넉히 뽑고 2차 정제
+    )
+    # 정제
+    cleaned = []
+    seen = set()
+    for k, score in kw:
+        k2 = _normalize_token(k)
+        if not _is_valid_kw(k2):
+            continue
+        low = k2.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        cleaned.append((k2[:60], float(score)))
+        if len(cleaned) >= top_n * 2:
+            break
+    # keybert score 우선 정렬 후 반환
+    cleaned.sort(key=lambda x: x[1], reverse=True)
+    return cleaned[:top_n]
+
+
+def _docs_texts(df_in: pd.DataFrame, text_cols: List[str]) -> List[str]:
+    cols = [c for c in (text_cols or []) if c in df_in.columns]
+    if not cols:
+        return []
+    out = []
+    for _, r in df_in.iterrows():
+        blob = " ".join(str(r.get(c, "") or "") for c in cols).strip()
+        if blob:
+            out.append(blob)
+    return out
+
+
+def _contains_keyword(txt: str, kw: str) -> bool:
+    # 영문은 단어경계 우선, 한국어/혼합은 서브스트링 보조
+    pat = re.compile(rf"(?i)(\b{re.escape(kw)}\b)|({re.escape(kw)})")
+    return bool(pat.search(txt))
+
+
+def compute_keyword_lift(
+    candidates: List[Tuple[str, float]],
+    df_all: pd.DataFrame,
+    df_class: pd.DataFrame,
+    text_cols: List[str],
+    eps: float = 1e-6,
+) -> List[Tuple[str, float, float, float, float]]:
+    """
+    후보 리스트(키워드, keybert_score)에 대해
+    - class_share = (해당 ICT 문서 중 kw 포함 비율)
+    - global_share = (전체 문서 중 kw 포함 비율)
+    - lift = (class_share+eps)/(global_share+eps)
+    반환: [(kw, lift, class_share, global_share, keybert_score)]
+    """
+    docs_all   = _docs_texts(df_all,   text_cols)
+    docs_class = _docs_texts(df_class, text_cols)
+    n_all, n_class = max(1, len(docs_all)), max(1, len(docs_class))
+
+    # 문서 단위 존재여부 계산(빠른 루프)
+    out = []
+    for kw, kscore in candidates:
+        c_all = 0
+        for t in docs_all:
+            if _contains_keyword(t, kw):
+                c_all += 1
+        c_cls = 0
+        for t in docs_class:
+            if _contains_keyword(t, kw):
+                c_cls += 1
+        class_share  = c_cls / n_class
+        global_share = c_all / n_all
+        lift = (class_share + eps) / (global_share + eps)
+        out.append((kw, float(lift), float(class_share), float(global_share), float(kscore)))
+    # Lift 내림차순, 동점 시 keybert_score로 타이 브레이크
+    out.sort(key=lambda x: (x[1], x[4]), reverse=True)
+    return out
 
 # ========================= 국가 브리프(요약) 입력 =========================
 st.sidebar.header("국가 브리프(요약)")
@@ -1605,26 +1709,28 @@ elif mode == "ICT 유형 단일클래스":
                 text_cols   = st.multiselect("검색할 텍스트 컬럼", options=pref_cols, default=text_cols)
         
             # (3) 입력 문서 만들기(해당 ICT 유형의 텍스트만)
-            docs = []
-            for _, r in sub_wb.iterrows():
-                blob = " ".join(str(r.get(c, "") or "") for c in text_cols).strip()
-                if blob:
-                    docs.append(blob)
-        
-            # (4) 대표 키워드 선정
-            if auto_mode:
-                kw_selected = keybert_keywords_for_docs(
-                    docs,
-                    top_n=int(topk_auto),
-                    ngram_range=(int(ngram_min), int(ngram_max)),
-                    mmr=bool(mmr),
-                    diversity=float(diversity),
-                )
-            else:
-                # 수동모드(간단 드롭다운만): KeyBERT 후보 30개 제시 후 선택
-                candidates = keybert_keywords_for_docs(docs, top_n=30)
-                kw_selected = st.multiselect("대표 키워드 선택", options=candidates, default=candidates[:8], max_selections=12)
-                per_kw = int(per_kw)
+            # (3) 입력 문서 만들기(해당 ICT 유형 텍스트)
+            docs = _docs_texts(sub_wb, text_cols)
+            
+            # (4) KeyBERT 후보 추출 + Lift 재랭킹
+            candidates = keybert_candidates_for_docs(
+                docs,
+                top_n=int(topk_auto if auto_mode else 30),
+                ngram_range=(int(ngram_min), int(ngram_max)),
+                mmr=bool(mmr),
+                diversity=float(diversity),
+            )
+            
+            ranked = compute_keyword_lift(
+                candidates=candidates,
+                df_all=df,          # 전체 코퍼스
+                df_class=sub_wb,    # 선택 ICT 코퍼스
+                text_cols=text_cols
+            )
+            
+            # 최종 선택: Lift 상위 N개
+            kw_selected = [kw for kw, lift, cshare, gshare, ks in ranked[:int(topk_auto)]]
+
         
             # (5) 렌더
             if not kw_selected:
@@ -2401,6 +2507,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
