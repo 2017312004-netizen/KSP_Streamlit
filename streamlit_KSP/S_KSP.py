@@ -1806,107 +1806,103 @@ else:
     st.info("사업 기간에서 연도를 추출할 수 없어 키워드 상대 트렌드를 건너뜁니다.")
 
 # =====================================================================
-# 완전 수동형 키워드 트렌드 선택 (검색 + 체크박스 + 시각화)
+# 키워드 트렌드 — 완전 수동 선택형 (AI 집합 미사용, 검색 없음)
 # =====================================================================
 st.markdown("---")
 st.subheader("키워드 트렌드 — 수동 선택형")
 
 if all_years:
-    # 1) 후보 풀: 전체 키워드
-    all_tokens = sorted(lift_all.columns.tolist())
+    # 1) 전체 해시태그 풀에서 후보 30개 산출 (AI 추출과 무관)
+    #    - kw_doc: {year: Counter({token:count,...}), ...}  ← 이미 위에서 구축됨
+    #    - 전체 빈도 합산 후 상위 30개만 보여줌 (원하면 숫자 바꿔도 됨)
+    total_freq = Counter()
+    for y in all_years:
+        total_freq.update(kw_doc[y])
 
-    # 2) 검색 및 필터
-    cL, cM, cR = st.columns([2,1,1])
-    with cL:
-        search_kw = st.text_input("검색(부분 일치)", value="", placeholder="예: 데이터, AI, e-GP ...")
-    with cM:
-        N_show = st.slider("표시할 후보 수", 10, 200, 40, 10)
-    with cR:
-        equalize = st.checkbox("상/하 그래프 개수 동일하게", value=True)
+    # 불용어/동적 불용어 제거용 stopset (AI 집합과 무관하게 다시 구성)
+    dyn = set()
+    for col in ["주제분류(대)","ICT 유형","대상국","대상기관","지원기관"]:
+        if col in df.columns:
+            dyn |= set(map(str.lower, df[col].astype(str).unique()))
+    stopset = {w.lower() for w in (STOP | BASE_STOP)} | dyn
 
-    if search_kw.strip():
-        candidates = [k for k in all_tokens if search_kw.lower() in k.lower()]
-    else:
-        candidates = all_tokens
+    def _keep_token(t):
+        core = re.sub(r"\s+","", str(t)).lower()
+        if not core or len(core) < 2: return False
+        if re.fullmatch(r"\d+(\.\d+)?", core): return False
+        return core not in stopset
 
-    candidates = candidates[:N_show]
+    # 상위 30개(필터 후)
+    top_candidates = [k for (k, _) in total_freq.most_common(200) if _keep_token(k)][:30]
 
-    # 3) 전체 선택/해제 버튼
-    b1, b2 = st.columns(2)
-    with b1:
-        select_all = st.button("전체 선택")
-    with b2:
-        clear_all = st.button("선택 해제")
+    # 2) 선택 UI (검색 없음)
+    st.caption("아래 리스트에서 직접 고르세요. (2~30개)")
+    selected_tokens = st.multiselect(
+        "키워드 선택",
+        options=top_candidates,
+        default=[],
+        help="AI 자동 결과와 무관합니다. 전체 해시태그 풀에서 빈도 상위 30개만 노출합니다."
+    )
 
-    # 4) 체크박스 리스트
-    if "manual_selection" not in st.session_state:
-        st.session_state.manual_selection = {k: False for k in candidates}
+    # 3) 균형 옵션: 상승/하락 그래프 키워드 수 동일
+    equalize = st.checkbox("상승/하락 그래프의 키워드 수를 동일하게 맞추기", value=True)
 
-    # 검색 결과 바뀌면 상태 초기화
-    if set(st.session_state.manual_selection.keys()) != set(candidates):
-        st.session_state.manual_selection = {k: False for k in candidates}
-
-    if select_all:
-        for k in candidates:
-            st.session_state.manual_selection[k] = True
-    if clear_all:
-        for k in candidates:
-            st.session_state.manual_selection[k] = False
-
-    selected_keys = []
-    with st.container():
-        for k in candidates:
-            st.session_state.manual_selection[k] = st.checkbox(
-                k, value=st.session_state.manual_selection[k]
-            )
-            if st.session_state.manual_selection[k]:
-                selected_keys.append(k)
-
-    st.caption(f"선택된 키워드: {len(selected_keys)}개")
-
-    # 5) 그래프 그리기
-    draw_btn = st.button("그래프 그리기", type="primary")
-    if draw_btn:
-        if not selected_keys:
-            st.warning("키워드를 1개 이상 선택하세요.")
+    # 4) 그리기 버튼
+    if st.button("그래프 그리기", type="primary"):
+        if len(selected_tokens) < 2 or len(selected_tokens) > 30:
+            st.warning("키워드를 2~30개 사이로 선택하세요.")
         else:
+            # 수동 선택된 키워드만 사용해 share/lift 재계산
+            share_sel, lift_sel = build_share_lift(selected_tokens, all_years, kw_doc, docs_per_year)
+
+            # 최근 창(윈도) 재사용
+            win_years = all_years[-min(WINDOW_YEARS, len(all_years)):]
+            years_plot = win_years[-min(RECENT_YEARS*2, len(win_years)):]  # 최근 10년 등
+
+            # 지표 계산 (상/하 분류용) — 선택된 키워드만
+            share_win = share_sel.loc[win_years]
+            lift_win  = lift_sel.loc[win_years]
+            latest_share = share_win.iloc[-1]
+            delta_share  = (share_win.iloc[-1] - share_win.iloc[0])      # p.p. 변화
+            last_lift    = lift_win.iloc[-1]
+            cagr_lift    = pd.Series({k: cagr(lift_win[k].values) for k in lift_win.columns})
+
             sig_up   = ((last_lift >= 1.0).astype(int) + (cagr_lift > 0).astype(int) + (delta_share > 0).astype(int))
             sig_down = ((last_lift < 1.0).astype(int)  + (cagr_lift < 0).astype(int) + (delta_share < 0).astype(int))
 
-            up_keys   = [k for k in selected_keys if (k in sig_up.index and sig_up[k] >= 2)]
-            down_keys = [k for k in selected_keys if (k in sig_down.index and sig_down[k] >= 2)]
+            up_keys   = [k for k in selected_tokens if (k in sig_up.index   and sig_up[k]   >= 2)]
+            down_keys = [k for k in selected_tokens if (k in sig_down.index and sig_down[k] >= 2)]
 
             if equalize and up_keys and down_keys:
                 m = min(len(up_keys), len(down_keys))
                 up_keys, down_keys = up_keys[:m], down_keys[:m]
 
+            # 5) 시각화
             uu, vv = st.columns(2, gap="large")
 
             with uu:
                 if up_keys:
-                    fup = plot_trend_plotly(up_keys, years_plot, lift_all, f"직접 선택 — 상승세 ({len(up_keys)}개)")
+                    fup = plot_trend_plotly(up_keys, years_plot, lift_sel, f"상승세 — 수동 선택 ({len(up_keys)}개)")
                     fup = style_fig(fup, bg_color=VIZ_BG["trend_up"], bg_alpha=0.5)
                     fup.update_layout(legend=dict(orientation="h", y=1.10, yanchor="bottom", x=0, xanchor="left"))
-                    fup = add_line_end_labels(fup, years_plot, lift_all, up_keys)
+                    fup = add_line_end_labels(fup, years_plot, lift_sel, up_keys)
                     fup = force_legend_top_padding(fup, base_top=130)
                     st.plotly_chart(fup, use_container_width=True, config={"displayModeBar": False})
                 else:
-                    st.info("선택한 키워드 중 ‘상승세’ 항목이 없습니다.")
+                    st.info("선택한 키워드 중 ‘상승세’로 분류된 항목이 없습니다.")
 
             with vv:
                 if down_keys:
-                    fdn = plot_trend_plotly(down_keys, years_plot, lift_all, f"직접 선택 — 하락세 ({len(down_keys)}개)")
+                    fdn = plot_trend_plotly(down_keys, years_plot, lift_sel, f"하락세 — 수동 선택 ({len(down_keys)}개)")
                     fdn = style_fig(fdn, bg_color=VIZ_BG["trend_down"], bg_alpha=0.5)
                     fdn.update_layout(legend=dict(orientation="h", y=1.10, yanchor="bottom", x=0, xanchor="left"))
-                    fdn = add_line_end_labels(fdn, years_plot, lift_all, down_keys)
+                    fdn = add_line_end_labels(fdn, years_plot, lift_sel, down_keys)
                     fdn = force_legend_top_padding(fdn, base_top=130)
                     st.plotly_chart(fdn, use_container_width=True, config={"displayModeBar": False})
                 else:
-                    st.info("선택한 키워드 중 ‘하락세’ 항목이 없습니다.")
+                    st.info("선택한 키워드 중 ‘하락세’로 분류된 항목이 없습니다.")
 else:
     st.info("연도 정보를 추출할 수 없어 트렌드를 표시할 수 없습니다.")
-
-
 
 
 
@@ -1914,6 +1910,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
