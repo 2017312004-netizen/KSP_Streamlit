@@ -26,6 +26,8 @@ from wordcloud import WordCloud
 import plotly.express as px
 import plotly.graph_objects as go
 from matplotlib import font_manager, rcParams
+import math
+from functools import lru_cache
 
 # --------------------- 페이지/테마 ---------------------
 st.set_page_config(page_title="KSP Explorer (Pro v4)", layout="wide", page_icon="🌍")
@@ -702,59 +704,121 @@ def keybert_candidates_for_docs(
     return cleaned[:top_n]
 
 
-def _docs_texts(df_in: pd.DataFrame, text_cols: List[str]) -> List[str]:
+d# ========= 대비형(contrastive) 재랭킹 유틸 =========
+import math
+from functools import lru_cache
+
+@st.cache_resource(show_spinner=False)
+def get_sbert(model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
+    try:
+        from sentence_transformers import SentenceTransformer
+        return SentenceTransformer(model_name)
+    except Exception:
+        return None
+
+def _prep_docs(df_in: pd.DataFrame, text_cols: list[str]) -> list[str]:
     cols = [c for c in (text_cols or []) if c in df_in.columns]
-    if not cols:
-        return []
+    if not cols: return []
     out = []
     for _, r in df_in.iterrows():
-        blob = " ".join(str(r.get(c, "") or "") for c in cols).strip()
-        if blob:
-            out.append(blob)
+        t = " ".join(str(r.get(c, "") or "") for c in cols).strip()
+        if t: out.append(t)
     return out
 
-
-def _contains_keyword(txt: str, kw: str) -> bool:
-    # 영문은 단어경계 우선, 한국어/혼합은 서브스트링 보조
+def _contains_kw_doclevel(txt: str, kw: str) -> bool:
+    # 영문: 단어경계 우선, 한글/혼합: 서브스트링 보조
     pat = re.compile(rf"(?i)(\b{re.escape(kw)}\b)|({re.escape(kw)})")
     return bool(pat.search(txt))
 
+def _doc_share(docs: list[str], kw: str) -> float:
+    if not docs: return 0.0
+    hit = 0
+    for t in docs:
+        if _contains_kw_doclevel(t, kw):
+            hit += 1
+    return hit / max(1, len(docs))
 
-def compute_keyword_lift(
-    candidates: List[Tuple[str, float]],
+def _monroe_log_odds_z(c_a, n_a, c_b, n_b, alpha=0.01):
+    """
+    Monroe et al. (2008) 베이지안 log-odds w/ informative Dirichlet prior
+    c_a: 클래스 내 카운트, n_a: 클래스 총문서
+    c_b: 배경 카운트,   n_b: 배경 총문서
+    반환: z-score (양수=클래스 편향)
+    """
+    # add-alpha smoothing on doc-hits
+    pa = (c_a + alpha) / (n_a + 2*alpha)
+    pb = (c_b + alpha) / (n_b + 2*alpha)
+    logodds = math.log(pa/(1-pa+1e-12) + 1e-12) - math.log(pb/(1-pb+1e-12) + 1e-12)
+    # 분산 근사(문서 이항모형)
+    va = 1.0 / max(1e-9, (c_a + alpha)) + 1.0 / max(1e-9, (n_a - c_a + alpha))
+    vb = 1.0 / max(1e-9, (c_b + alpha)) + 1.0 / max(1e-9, (n_b - c_b + alpha))
+    z = logodds / math.sqrt(va + vb)
+    return z
+
+@lru_cache(maxsize=2048)
+def _embed_phrase(phrase: str):
+    model = get_sbert()
+    if model is None:
+        return None
+    return model.encode(phrase, normalize_embeddings=True)
+
+def _cos(a, b):
+    import numpy as _np
+    if a is None or b is None: return 0.0
+    return float(_np.clip(_np.dot(a, b), -1.0, 1.0))
+
+def _centroid(docs: list[str]):
+    model = get_sbert()
+    if model is None or not docs:
+        return None
+    emb = model.encode(docs, normalize_embeddings=True)
+    import numpy as _np
+    return _np.mean(emb, axis=0)
+
+def rerank_with_contrastive(
+    candidates: list[tuple[str, float]],   # (kw, keybert_score)
     df_all: pd.DataFrame,
     df_class: pd.DataFrame,
-    text_cols: List[str],
-    eps: float = 1e-6,
-) -> List[Tuple[str, float, float, float, float]]:
+    text_cols: list[str],
+    w_lift=0.5, w_logodds=0.3, w_embed=0.2,
+    alpha=1.0
+) -> list[tuple[str, float, float, float, float, float]]:
     """
-    후보 리스트(키워드, keybert_score)에 대해
-    - class_share = (해당 ICT 문서 중 kw 포함 비율)
-    - global_share = (전체 문서 중 kw 포함 비율)
-    - lift = (class_share+eps)/(global_share+eps)
-    반환: [(kw, lift, class_share, global_share, keybert_score)]
+    반환: [(kw, final_score, lift, logodds_z, embed_delta, keybert_score)]
     """
-    docs_all   = _docs_texts(df_all,   text_cols)
-    docs_class = _docs_texts(df_class, text_cols)
-    n_all, n_class = max(1, len(docs_all)), max(1, len(docs_class))
+    docs_all   = _prep_docs(df_all, text_cols)
+    docs_class = _prep_docs(df_class, text_cols)
+    n_all, n_cls = max(1, len(docs_all)), max(1, len(docs_class))
 
-    # 문서 단위 존재여부 계산(빠른 루프)
+    # 임베딩 대비 준비(클래스 중심 vs 전체 중심)
+    c_all  = _centroid(docs_all)
+    c_cls  = _centroid(docs_class)
+
     out = []
-    for kw, kscore in candidates:
-        c_all = 0
-        for t in docs_all:
-            if _contains_keyword(t, kw):
-                c_all += 1
-        c_cls = 0
-        for t in docs_class:
-            if _contains_keyword(t, kw):
-                c_cls += 1
-        class_share  = c_cls / n_class
-        global_share = c_all / n_all
-        lift = (class_share + eps) / (global_share + eps)
-        out.append((kw, float(lift), float(class_share), float(global_share), float(kscore)))
-    # Lift 내림차순, 동점 시 keybert_score로 타이 브레이크
-    out.sort(key=lambda x: (x[1], x[4]), reverse=True)
+    for kw, kb in candidates:
+        # 문서 비중 기반
+        share_cls  = _doc_share(docs_class, kw)
+        share_all  = _doc_share(docs_all,   kw)
+        lift = (share_cls + 1e-6) / (share_all + 1e-6)
+
+        # 베이지안 log-odds z
+        hits_cls = int(round(share_cls * n_cls))
+        hits_all = int(round(share_all * n_all))
+        z = _monroe_log_odds_z(hits_cls, n_cls, hits_all, n_all, alpha=max(alpha, 0.01))
+
+        # 임베딩 대비(그 ICT에 더 가까운지)
+        e_kw = _embed_phrase(kw)
+        emb_delta = _cos(e_kw, c_cls) - _cos(e_kw, c_all)
+
+        # 스코어 결합(안정화를 위해 log-lift 사용)
+        import numpy as _np
+        log_lift = float(_np.log(max(lift, 1e-6)))
+        final = w_lift*log_lift + w_logodds*z + w_embed*emb_delta + 0.05*kb  # KeyBERT 약간만 tie-break
+
+        out.append((kw, final, lift, z, emb_delta, kb))
+
+    # 내림차순 정렬
+    out.sort(key=lambda x: x[1], reverse=True)
     return out
 
 # ========================= 국가 브리프(요약) 입력 =========================
@@ -1712,24 +1776,25 @@ elif mode == "ICT 유형 단일클래스":
             # (3) 입력 문서 만들기(해당 ICT 유형 텍스트)
             docs = _docs_texts(sub_wb, text_cols)
             
-            # (4) KeyBERT 후보 추출 + Lift 재랭킹
+            # ① KeyBERT 후보
             candidates = keybert_candidates_for_docs(
-                docs,
-                top_n=int(topk_auto if auto_mode else 30),
+                docs, top_n=int(topk_auto if auto_mode else 30),
                 ngram_range=(int(ngram_min), int(ngram_max)),
-                mmr=bool(mmr),
-                diversity=float(diversity),
+                mmr=bool(mmr), diversity=float(diversity),
             )
             
-            ranked = compute_keyword_lift(
+            # ② 대비형 재랭킹
+            ranked = rerank_with_contrastive(
                 candidates=candidates,
                 df_all=df,          # 전체 코퍼스
                 df_class=sub_wb,    # 선택 ICT 코퍼스
-                text_cols=text_cols
+                text_cols=text_cols,
+                w_lift=0.55, w_logodds=0.30, w_embed=0.15,  # 가중치 예시(라이트 테마)
+                alpha=1.0
             )
             
-            # 최종 선택: Lift 상위 N개
-            kw_selected = [kw for kw, lift, cshare, gshare, ks in ranked[:int(topk_auto)]]
+            # ③ 최종 N개 선택
+            kw_selected = [kw for kw, final, lift, z, emb, kb in ranked[:int(topk_auto)]]
 
         
             # (5) 렌더
@@ -2507,6 +2572,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
