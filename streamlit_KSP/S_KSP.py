@@ -172,6 +172,61 @@ DATA_DIR = Path(__file__).resolve().parent if "__file__" in globals() else Path.
 SEARCH_DIRS = [DATA_DIR, DATA_DIR / "data", DATA_DIR / "assets"]
 
 
+# === NEW: 컬럼 정규화(유사명 → 표준명) ===
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    - 공백/개행 제거, 대소문자 틀어짐 보정
+    - 자주 쓰이는 변형명을 표준 컬럼으로 통일
+    """
+    if df is None or df.empty:
+        return df
+
+    # 1) 트리밍
+    new_cols = []
+    for c in df.columns:
+        c2 = str(c).replace("\n", " ").strip()
+        c2 = re.sub(r"\s+", " ", c2)
+        new_cols.append(c2)
+    df = df.copy()
+    df.columns = new_cols
+
+    # 2) 유사명 매핑
+    #   표준: "사업 기간", "연도", "요약", "주요 내용", "Hashtag", "Hashtag_str", "ICT 유형", "주제분류(대)", "대상국", "대상기관", "지원기관", "파일명"
+    rename_map = {
+        "사업기간": "사업 기간",
+        "프로젝트 기간": "사업 기간",
+        "기간": "사업 기간",
+        "Project Period": "사업 기간",
+        "Years": "연도",
+        "Year": "연도",
+        "year": "연도",
+        "Hashtags": "Hashtag",
+        "해시태그": "Hashtag",
+        "해시태그_문자열": "Hashtag_str",
+        "ICT유형": "ICT 유형",
+        "주제(대)": "주제분류(대)",
+        "주제 대분류": "주제분류(대)",
+        "Country": "대상국",
+        "기관": "대상기관",
+        "기관명": "대상기관",
+        "지원 기관": "지원기관",
+        "Filename": "파일명",
+        "파일 이름": "파일명",
+        "요약문": "요약",
+        "내용 요약": "요약",
+        "본문": "주요 내용",
+    }
+    for k, v in list(rename_map.items()):
+        if k in df.columns and v not in df.columns:
+            df = df.rename(columns={k: v})
+
+    # 3) 최소 필요한 핵심 컬럼이 없을 때도 후속 로직이 죽지 않도록 보정
+    for must in ["파일명", "대상국", "ICT 유형", "주제분류(대)"]:
+        if must not in df.columns:
+            # 없는 경우라도 차트 전체가 죽지 않게 placeholder 생성
+            df[must] = df.get(must, pd.Series(["-"] * len(df)))
+
+    return df
 
 
 @st.cache_data(show_spinner=False)
@@ -253,6 +308,8 @@ if src_mode == "자동(같은 폴더)":
                                            index=0, format_func=lambda i: labels[i])
         st.sidebar.caption(f"경로: `{auto_files[sel_idx]}`")
         df = load_from_path(str(auto_files[sel_idx]))
+        df = normalize_columns(df)
+
     else:
         st.sidebar.info("같은 폴더(또는 ./data, ./assets)에서 적합한 데이터 파일을 찾지 못했습니다. 다른 소스 방식을 사용하세요.")
 
@@ -260,11 +317,15 @@ elif src_mode == "파일 업로드":
     up = st.sidebar.file_uploader("엑셀(.xlsx/.xls) 또는 CSV 업로드", type=["xlsx", "xls", "csv"])
     if up is not None:
         df = load_from_uploader(up)
+        df = normalize_columns(df)
+
 
 elif src_mode == "CSV 붙여넣기":
     pasted = st.sidebar.text_area("CSV 원문 붙여넣기(헤더 포함)", height=160)
     if pasted.strip():
         df = load_from_csv_text(pasted)
+        df = normalize_columns(df)
+
 
 else:  # 파일 경로
     # 자동 후보가 있으면 기본값을 그 중 첫 번째로 노출(없으면 DEFAULT 사용)
@@ -272,6 +333,8 @@ else:  # 파일 경로
     data_path = st.sidebar.text_input("엑셀/CSV 경로", default_path)
     if os.path.exists(data_path):
         df = load_from_path(data_path)
+        df = normalize_columns(df)
+
         st.sidebar.caption(f"경로: `{Path(data_path).resolve()}`")
 
 # 데이터 없으면 중단
@@ -638,22 +701,36 @@ def extract_iso_from_stfolium(ret: dict):
 # --------------------- 연도 파서 ---------------------
 @st.cache_data(show_spinner=False)
 def expand_years(df_in: pd.DataFrame) -> pd.DataFrame:
-    def years_from_text(txt: str):
-        if pd.isna(txt): return []
-        raw = str(txt)
-        yrs = [int(y) for y in re.findall(r"(?:19|20)\d{2}", raw)]
-        yrs = [y for y in yrs if 1990 <= y <= 2035]
-        if not yrs: return []
-        if len(yrs) == 1: return yrs
-        a, b = min(yrs), max(yrs)
-        if b - a > 30: b = a
-        return list(range(a, b+1))
+    """
+    후보 컬럼(우선순위 순)에서 연도 추출:
+      ["사업 기간", "연도", "기간", "Project Period", "Years", "Year"]
+    하나도 없으면 '빈 결과'를 돌려주고, 이후 시각화는 자동 skip.
+    """
+    if df_in is None or df_in.empty:
+        return pd.DataFrame(columns=["연도"], dtype="Int64")
+
+    cand_cols = ["사업 기간", "연도", "기간", "Project Period", "Years", "Year", "year"]
+    src_col = next((c for c in cand_cols if c in df_in.columns), None)
+
     dfy = df_in.copy()
-    dfy["연도목록"] = dfy["사업 기간"].apply(years_from_text)
-    dfy = dfy.explode("연도목록")
-    dfy = dfy.rename(columns={"연도목록":"연도"})
+
+    if src_col is None:
+        # 완전 방어: 나중 파이프라인이 죽지 않도록 연도 없음 처리
+        out = pd.DataFrame({"연도": pd.Series([], dtype="Int64")})
+        # 원본의 인덱스를 유지하려면 merge/join 대신 필요 시 호출부에서 사용
+        return out
+
+    # 각 행별로 연도 리스트 생성
+    years_list = dfy[src_col].apply(years_from_span)
+
+    if not years_list.apply(lambda x: len(x) > 0).any():
+        # 후보 컬럼이 있긴 한데 실제 연도 패턴이 없을 때(전부 공란, 텍스트 등)
+        return pd.DataFrame({"연도": pd.Series([], dtype="Int64")})
+
+    dfy = dfy.assign(연도목록=years_list).explode("연도목록").rename(columns={"연도목록": "연도"})
     dfy["연도"] = pd.to_numeric(dfy["연도"], errors="coerce").astype("Int64")
     return dfy
+
 
 dfy = expand_years(df)     # 키워드/주제 상대 트렌드는 '국가 중복 없는' 원본 df 기준
 
@@ -1284,52 +1361,37 @@ HASHTAG_COL = "Hashtag" if "Hashtag" in df.columns else ("Hashtag_str" if "Hasht
 
 def clean(s): return s.astype(str).str.replace(r"\s+"," ",regex=True).str.strip()
 
-YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
-
-# def years_from_span(text: str):
-#     if not isinstance(text, str): return []
-#     t = text.replace("~","-").replace("–","-").replace("—","-")
-#     t = re.sub(r"[()]", " ", t)
-#     ys = [int(y) for y in YEAR_RE.findall(t)]
-#     return list(range(min(ys), max(ys)+1)) if ys else []
-try:
-    YEAR_RE
-except NameError:
-    YEAR_RE = re.compile(r"(?:19|20)\d{2}")
+# === KEEP ONLY THIS ===
+YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 
 def years_from_span(text):
-    """'2025-2026' → [2025,2026], '2025' → [2025], 숫자(2025)도 허용."""
+    """
+    '2025-2026' → [2025,2026], '2025' → [2025]
+    숫자(정수/실수)도 허용. 범위가 뒤집혀도 정상화.
+    """
     if pd.isna(text):
         return []
 
-    # 1) 숫자형(정수/실수/넘파이 숫자) 처리
-    if isinstance(text, (int, np.integer)):
-        y = int(text)
-        return [y] if 1990 <= y <= 2035 else []
-    if isinstance(text, (float, np.floating)):
+    if isinstance(text, (int, np.integer, float, np.floating)):
         y = int(text)
         return [y] if 1990 <= y <= 2035 else []
 
-    # 2) 문자열 처리
     t = str(text)
     t = t.replace("~", "-").replace("–", "-").replace("—", "-")
     t = re.sub(r"[()]", " ", t)
 
-    # 단일 연도들 추출
-    ys = [int(y) for y in YEAR_RE.findall(t)]
-    ys = [y for y in ys if 1990 <= y <= 2035]
+    years = [int(y) for y in YEAR_RE.findall(t)]
+    years = [y for y in years if 1990 <= y <= 2035]
 
-    # 범위(2025-2026 등) 확장
-    ranges = re.findall(r"((?:19|20)\d{2})\s*-\s*((?:19|20)\d{2})", t)
-    for a, b in ranges:
+    # 범위 확장
+    for a, b in re.findall(r"((?:19|20)\d{2})\s*-\s*((?:19|20)\d{2})", t):
         a, b = int(a), int(b)
-        if a <= b:
-            ys.extend(range(a, b + 1))
-        else:
-            ys.extend(range(b, a + 1))
+        lo, hi = min(a, b), max(a, b)
+        years.extend(range(lo, hi + 1))
 
-    ys = sorted(set(ys))
-    return ys if ys else []
+    years = sorted(set(years))
+    return years
+
 
 SYN = {"sme":"SME","pki":"PKI","ai":"AI","ict":"ICT","bigdata":"빅데이터","big data":"빅데이터",
        "e-gp":"전자조달","egp":"전자조달","e-procurement":"전자조달","data center":"데이터센터","cloud":"클라우드",
@@ -1752,6 +1814,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
