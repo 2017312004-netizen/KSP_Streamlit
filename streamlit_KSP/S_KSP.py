@@ -1,7 +1,7 @@
 # S_KSP_clickpro_v4_plotly_patch_FIXED.py
 # ===============================================
 # KSP Explorer — Leaflet + Plotly (Pro v4 • Plotly patch, FIXED)
-# - 지도: ① 국가별 총계(클릭) ② WB Class 단일클래스(클릭)
+# - 지도: ① 국가별 총계(클릭) ② ICT 유형 단일클래스(클릭)
 # - 상세: 워드클라우드(항상: 해시태그+요약/내용) + 상위 키워드 가로막대(라벨 잘림 방지)
 # - 전역 대시보드: 도넛 2개 + 주제×WB 100% 누적 막대
 # - 연도 시각화: 순위 Bump / 100% 누적 막대 (토글)
@@ -26,15 +26,18 @@ import plotly.express as px
 import plotly.graph_objects as go
 from matplotlib import font_manager, rcParams
 
+#######################################################
+# --------------------- Changyeon ---------------------
+# import pdfplumber
+# import zipfile
+# import streamlit.components.v1 as components
+# import json
+# from sklearn.feature_extraction.text import TfidfVectorizer
+# import tempfile
+#######################################################
 
 # --------------------- 페이지/테마 ---------------------
 st.set_page_config(page_title="KSP Explorer (Pro v4)", layout="wide", page_icon="🌍")
-
-
-
-
-
-
 
 @st.cache_resource
 def resolve_korean_font() -> str | None:
@@ -156,6 +159,210 @@ STOP = {
     "경제에서", "경제로", "전환하고자", "그러나" ,"부문은", "부족으로", "잠재력을", "충분히", "활용하지", "못하고", "호주는", "호주의", "분야에서", "인도네시아는", "문제점을", "효율성을"
 }
 STOP_LOW = {w.lower() for w in STOP}
+#######################################################
+# --------------------- Changyeon ---------------------
+# st.sidebar.header("1. LLM 입력용 ZIP 폴더 생성")
+# def extract_smooth_text_from_pdf(pdf_path: str) -> str:
+#     """
+#     PDF에서 텍스트 추출 후 문장 단위로 이어붙임
+#     """
+#     full_text = ""
+#     with pdfplumber.open(pdf_path) as pdf:
+#         for page in pdf.pages:
+#             page_text = page.extract_text() or ""
+#             page_text = page_text.strip()
+#             if not page_text:
+#                 continue
+
+#             if re.search(r'[.?!\'"]$', page_text.strip()):
+#                 full_text += page_text + "\n"
+#             else:
+#                 full_text += page_text + " "
+#     return full_text.strip()
+
+# # 사이드바에서 ZIP 파일 업로드
+# uploaded_zip = st.sidebar.file_uploader("📂 PDF 폴더(ZIP) 업로드", type="zip")
+
+# if uploaded_zip is not None:
+#     results = []
+#     txt_files = []
+
+#     # 업로드한 ZIP을 임시 폴더에 풀기
+#     with tempfile.TemporaryDirectory() as tmpdir:
+#         with zipfile.ZipFile(uploaded_zip, "r") as zip_ref:
+#             zip_ref.extractall(tmpdir)
+
+#         # 변환된 TXT들을 담을 ZIP 버퍼
+#         zip_buffer = io.BytesIO()
+#         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as out_zip:
+#             for filename in os.listdir(tmpdir):
+#                 if not filename.lower().endswith(".pdf"):
+#                     continue
+
+#                 pdf_path = os.path.join(tmpdir, filename)
+#                 txt_filename = os.path.splitext(filename)[0] + ".txt"
+
+#                 try:
+#                     text = extract_smooth_text_from_pdf(pdf_path)
+#                     if len(text) < 100:
+#                         results.append(f"⚠️ 텍스트 부족 → 건너뜀: {filename}")
+#                         continue
+
+#                     # 변환된 텍스트를 ZIP에 직접 저장
+#                     out_zip.writestr(txt_filename, text)
+#                     txt_files.append(txt_filename)
+#                     results.append(f"✓ 저장 완료: {filename}")
+#                 except Exception as e:
+#                     results.append(f"⚠️ 오류 발생: {filename} → {e}")
+
+#         # ZIP 다운로드 버튼
+#         zip_buffer.seek(0)
+#         st.write("### 처리 결과")
+#         st.text("\n".join(results))
+
+#         if txt_files:
+#             st.download_button(
+#                 label="📥 변환된 TXT ZIP 다운로드",
+#                 data=zip_buffer,
+#                 file_name="PDF2TXT_Result.zip",
+#                 mime="application/zip"
+#             )
+# else:
+#     st.info("👈 사이드바에서 ZIP 파일을 업로드하세요.")
+
+# st.sidebar.header("2. LLM 입력용 프롬프트 복사")
+# text = """
+# 네 역할은 Tabulation machine이야.
+# zip 폴더의 압축을 해제한 뒤 정보를 추출해서 table을 만들 거야.
+# table의 열은 ['파일명', '대상국', '대상기관', '주요 분야', '사업 기간, '지원기관', '주요 내용', '기대 효과', '요약', 'WB_Class']로 구성해.
+# 파일명은 zip 폴더 내 확장자 및 영문, 국문 표기를 제외한 파일명을 입력해.
+# 대상국, 대상기관, 주요 분야, 지원기관은 파일 내용으로부터 추출해. 이들은 한국어 label 형태로 입력해.
+# 사업 기간은 연도와 대시를 사용해서 나타내.
+# 주요 내용, 기대 효과, 요약은 각각 5문장 이상, 10문장 이하의 문장으로 입력해.
+# 주요 내용은 현황과 이슈, 문제점, 제안 및 제언을 위주로 작성해.
+# 기대효과는 정성적 및 정량적 성과, 전망, 기대효과 중심으로 작성해.
+# 요약은 네 판단 하에 다룰 만한 부분을 종합적으로 작성해.
+# ICT 유형는 https://data360.worldbank.org/en/digital의 Topic을 label로 사용할 거야.
+# 'Connectivity', 'Data Infrastructure', 'Cybersecurity', 'Digital Industry and Jobs', 'Digital Services' 중에 선택해.
+# 보고서 성격에 따라 아래 사전을 참고하여 label을 할당해.
+# {Connectivity: [Telecom Networks, Telecom Subscriptions, Digital Adoption, Telecom Markets and Competition, Affordability, Telecom Regulation],
+# Data Infrastructure: [Data Centers, Internet Exchange Points (IXPs)],
+# Cybersecurity: [ITU Global Cybersecurity Index (GCI)],
+# Digital Industry and Jobs: [ICT Industry , Digital Skills],
+# Digital Services: [Digital Public Infrastructure - DPI, E-Government]}
+# """
+# st.sidebar.code(text, language="text")
+# st.sidebar.link_button("🌐 LLM 접속", "https://chatgpt.com/c")
+
+# st.sidebar.header("3. Hashtag 추출 및 문장 결합")
+# def make_tags(row):  # 1
+#     tags = []
+#     text = f"{row['파일명']} {row['대상기관']} {row['지원기관']}"
+    
+#     if 'KDI' in text:
+#         tags += ['경제', '사회정책']
+#     if '한국수출입은행' in text:
+#         tags += ['건설', '인프라']
+#     if 'KOTRA' in text:
+#         tags += ['산업', '무역', '투자']
+        
+#     return list(dict.fromkeys(tags))
+
+# def del_word(row, column, word):  # 2
+#     text = f"{row[column]}"
+#     if pd.isna(text):
+#         return None
+    
+#     parts = [p.strip() for p in str(text).split(',')]
+#     result_parts = []
+
+#     for p in parts:
+#         if not p:
+#             continue
+#         if word not in p:
+#             result_parts.append(p)
+#         else:
+#             match = re.search(r'\(([^)]*)\)', p)
+#             if match:
+#                 result_parts.append(match.group(1).strip())
+
+#     return ', '.join(result_parts) if result_parts else None
+
+# def top_tfidf_terms(row_tfidf, terms, k=3):
+#     sorted_indices = row_tfidf.toarray().ravel().argsort()[::-1]
+#     top_idxs = sorted_indices[:k]
+#     return [terms[i] for i in top_idxs if row_tfidf[0, i] > 0]
+
+# uploaded_file = st.sidebar.file_uploader("📂 엑셀 파일 업로드", type=["xlsx"])
+
+# if uploaded_file:
+#     df_c = pd.read_excel(uploaded_file)
+
+#     # 기존 열은 그대로 두고 새로운 열 추가
+#     df_c['Hashtag'] = df_c.apply(make_tags, axis=1)
+#     df_c['지원기관'] = df_c.apply(lambda r: del_word(r, '지원기관', 'KSP'), axis=1)
+#     df_c[['지원기관']] = df_c[['지원기관']].fillna('-')
+
+#     target_cols = ['대상기관', '지원기관']
+#     df_c[target_cols] = df_c[target_cols].fillna('')
+#     for col in target_cols:
+#         df_c[col] = df_c[col].str.replace(r'\s*등$', '', regex=True)
+
+#     df_c['full_text'] = (
+#         df_c[['주요 내용','기대 효과','요약']]
+#         .fillna('')
+#         .agg(' '.join, axis=1)
+#     )
+
+#     # TF–IDF
+#     korean_stopwords = [
+#         '의','가','이','은','들','는','을','를','에','와','과','도','으로','에서',
+#         '하다','한다','있다','없다','좋다','같다','되다','수','을','기','등']
+#     tfidf = TfidfVectorizer(max_df=0.8, min_df=2,
+#                             stop_words=korean_stopwords,
+#                             ngram_range=(1,1), max_features=2000)
+#     X_tfidf = tfidf.fit_transform(df_c['full_text'])
+#     terms = tfidf.get_feature_names_out()
+
+#     # 기존 Hashtag + TF-IDF 키워드 합치기
+#     new_tags = []
+#     for i, vec in enumerate(X_tfidf):
+#         kws = top_tfidf_terms(vec, terms, k=2)
+#         existing = df_c.at[i, 'Hashtag']
+#         if isinstance(existing, str):
+#             exist_list = [t.strip() for t in existing.split(',') if t.strip()]
+#         elif isinstance(existing, list):
+#             exist_list = existing.copy()
+#         else:
+#             exist_list = []
+#         for w in kws:
+#             if w not in exist_list:
+#                 exist_list.append(w)
+#         new_tags.append(exist_list)
+
+#     df_c['Hashtag'] = new_tags
+#     df_c['Hashtag_str'] = df_c['Hashtag'].apply(lambda lst: ', '.join(lst) if lst else None)
+
+#     # 결과 미리보기
+#     st.subheader("🔎 Hashtag 추출 결과 (상위 10행)")
+#     st.dataframe(df_c.head(10))
+
+#     # 다운로드
+#     output = io.BytesIO()
+#     with pd.ExcelWriter(output, engine="openpyxl") as writer:
+#         df_c.to_excel(writer, index=False, sheet_name="Result")
+#     output.seek(0)
+
+#     st.download_button(
+#         "📥 결과 엑셀 다운로드",
+#         data=output,
+#         file_name="Hashtag_Result.xlsx",
+#         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+#     )
+
+# else:
+#     st.info("👈 사이드바에서 엑셀 파일을 업로드하세요.")
+#######################################################
 
 # --------------------- 데이터 입력 ---------------------
 st.sidebar.header("데이터 입력")
@@ -276,13 +483,13 @@ if df is None or df.empty:
 
 # 필수 컬럼 진단
 REQ = ["파일명","대상국","대상기관","주요 분야","지원기관","사업 기간","주요 내용","기대 효과",
-       "요약","WB Class","주제분류(대)","Hashtag","Hashtag_str","full_text"]
+       "요약","ICT 유형","주제분류(대)","Hashtag","Hashtag_str","full_text"]
 missing = [c for c in REQ if c not in df.columns]
 if missing:
     st.warning(f"필수 컬럼 누락: {missing}")
 
 with st.expander("데이터 미리보기 / 진단", expanded=False):
-    st.write(f"행 수: {len(df):,}  |  고유 대상국: {df['대상국'].nunique()}  |  고유 WB Class: {df['WB Class'].nunique()}")
+    st.write(f"행 수: {len(df):,}  |  고유 대상국: {df['대상국'].nunique()}  |  고유 ICT 유형: {df['ICT 유형'].nunique()}")
     st.dataframe(df.head(25), use_container_width=True)
 # --------------------- 데이터 입력 (끝) ---------------------
 
@@ -356,8 +563,8 @@ elif brief_mode == "파일 업로드":
 # 비활성화면 briefs_map == {}
 
 
-# ========================= WB Class 브리프(요약) 입력 =========================
-st.sidebar.header("WB Class 브리프(요약)")
+# ========================= ICT 유형 브리프(요약) 입력 =========================
+st.sidebar.header("ICT 유형 브리프(요약)")
 
 @st.cache_data(show_spinner=False)
 def load_wb_briefs_from_ipynb_bytes(b: bytes) -> dict:
@@ -410,7 +617,7 @@ def load_wb_briefs_auto(app_dir: Path) -> tuple[dict, str | None]:
     return {}, None
 
 
-wb_brief_mode = st.sidebar.radio("소스 (WB Class)", ["자동(같은 폴더)", "파일 업로드", "비활성화"],
+wb_brief_mode = st.sidebar.radio("소스 (ICT 유형)", ["자동(같은 폴더)", "파일 업로드", "비활성화"],
                                  index=0, horizontal=True)
 
 # '브리프 리로드' 버튼은 위에서 st.cache_data.clear()를 호출하므로 여기에도 적용됨
@@ -432,30 +639,113 @@ elif wb_brief_mode == "파일 업로드":
 
 # --------------------- 국가 매핑 ---------------------
 COUNTRY_MAP = {
+    # 🌏 아시아
     "대한민국": ("KOR","Korea, Republic of","대한민국"), "한국": ("KOR","Korea, Republic of","대한민국"),
-    "호주": ("AUS","Australia","호주"), "튀니지": ("TUN","Tunisia","튀니지"), "조지아": ("GEO","Georgia","조지아"),
-    "자메이카": ("JAM","Jamaica","자메이카"), "베트남": ("VNM","Vietnam","베트남"), "이집트": ("EGY","Egypt","이집트"),
-    "몰도바": ("MDA","Moldova","몰도바"), "세르비아": ("SRB","Serbia","세르비아"), "우즈베키스탄": ("UZB","Uzbekistan","우즈베키스탄"),
-    "캄보디아": ("KHM","Cambodia","캄보디아"), "인도네시아": ("IDN","Indonesia","인도네시아"), "몽골": ("MNG","Mongolia","몽골"),
-    "스리랑카": ("LKA","Sri Lanka","스리랑카"), "요르단": ("JOR","Jordan","요르단"), "온두라스": ("HND","Honduras","온두라스"),
-    "라오스": ("LAO","Laos","라오스"), "르완다": ("RWA","Rwanda","르완다"), "태국": ("THA","Thailand","태국"),
-    "파라과이": ("PRY","Paraguay","파라과이"), "멕시코": ("MEX","Mexico","멕시코"), "가나": ("GHA","Ghana","가나"),
-    "말레이시아": ("MYS","Malaysia","말레이시아"), "과테말라": ("GTM","Guatemala","과테말라"), "폴란드": ("POL","Poland","폴란드"),
-    "탄자니아": ("TZA","Tanzania","탄자니아"), "방글라데시": ("BGD","Bangladesh","방글라데시"), "헝가리": ("HUN","Hungary","헝가리"),
-    "페루": ("PER","Peru","페루"), "필리핀": ("PHL","Philippines","필리핀"),
-    "우크라이나": ("UKR","Ukraine","우크라이나"), "칠레": ("CHL","Chile","칠레"),
-    "콜롬비아":  ("COL", "Colombia", "콜롬비아"),
-    "코스타리카": ("CRI", "Costa Rica", "코스타리카"),
-    "카타르":    ("QAT", "Qatar", "카타르"),
-    "타지키스탄": ("TJK", "Tajikistan", "타지키스탄"),
-    "우루과이":  ("URY", "Uruguay", "우루과이"),
-    "브라질":    ("BRA", "Brazil", "브라질"),
-    "불가리아":  ("BGR", "Bulgaria", "불가리아"),
+    "북한": ("PRK","Korea, Democratic People's Republic of","북한"),
+    "일본": ("JPN","Japan","일본"), "중국": ("CHN","China","중국"), "몽골": ("MNG","Mongolia","몽골"),
+    "베트남": ("VNM","Vietnam","베트남"), "라오스": ("LAO","Laos","라오스"), "캄보디아": ("KHM","Cambodia","캄보디아"),
+    "태국": ("THA","Thailand","태국"), "미얀마": ("MMR","Myanmar","미얀마"),
+    "말레이시아": ("MYS","Malaysia","말레이시아"), "싱가포르": ("SGP","Singapore","싱가포르"),
+    "인도네시아": ("IDN","Indonesia","인도네시아"), "필리핀": ("PHL","Philippines","필리핀"),
+    "브루나이": ("BRN","Brunei Darussalam","브루나이"), "동티모르": ("TLS","Timor-Leste","동티모르"),
+    "인도": ("IND","India","인도"), "파키스탄": ("PAK","Pakistan","파키스탄"), "네팔": ("NPL","Nepal","네팔"),
+    "부탄": ("BTN","Bhutan","부탄"), "스리랑카": ("LKA","Sri Lanka","스리랑카"), "몰디브": ("MDV","Maldives","몰디브"),
+    "카자흐스탄": ("KAZ","Kazakhstan","카자흐스탄"), "우즈베키스탄": ("UZB","Uzbekistan","우즈베키스탄"),
+    "키르기스스탄": ("KGZ","Kyrgyzstan","키르기스스탄"), "타지키스탄": ("TJK","Tajikistan","타지키스탄"),
+    "투르크메니스탄": ("TKM","Turkmenistan","투르크메니스탄"), "아프가니스탄": ("AFG","Afghanistan","아프가니스탄"),
+    "이란": ("IRN","Iran","이란"), "이라크": ("IRQ","Iraq","이라크"), "시리아": ("SYR","Syrian Arab Republic","시리아"),
+    "레바논": ("LBN","Lebanon","레바논"), "이스라엘": ("ISR","Israel","이스라엘"), "팔레스타인": ("PSE","Palestine","팔레스타인"),
+    "요르단": ("JOR","Jordan","요르단"), "사우디아라비아": ("SAU","Saudi Arabia","사우디아라비아"),
+    "예멘": ("YEM","Yemen","예멘"), "오만": ("OMN","Oman","오만"), "아랍에미리트": ("ARE","United Arab Emirates","아랍에미리트"),
+    "카타르": ("QAT","Qatar","카타르"), "바레인": ("BHR","Bahrain","바레인"), "쿠웨이트": ("KWT","Kuwait","쿠웨이트"),
+
+    # 🌍 유럽
+    "영국": ("GBR","United Kingdom","영국"), "아일랜드": ("IRL","Ireland","아일랜드"), "프랑스": ("FRA","France","프랑스"),
+    "독일": ("DEU","Germany","독일"), "이탈리아": ("ITA","Italy","이탈리아"), "스페인": ("ESP","Spain","스페인"),
+    "포르투갈": ("PRT","Portugal","포르투갈"), "네덜란드": ("NLD","Netherlands","네덜란드"),
+    "벨기에": ("BEL","Belgium","벨기에"), "룩셈부르크": ("LUX","Luxembourg","룩셈부르크"),
+    "스위스": ("CHE","Switzerland","스위스"), "오스트리아": ("AUT","Austria","오스트리아"),
+    "덴마크": ("DNK","Denmark","덴마크"), "노르웨이": ("NOR","Norway","노르웨이"), "스웨덴": ("SWE","Sweden","스웨덴"),
+    "핀란드": ("FIN","Finland","핀란드"), "아이슬란드": ("ISL","Iceland","아이슬란드"),
+    "체코": ("CZE","Czechia","체코"), "폴란드": ("POL","Poland","폴란드"), "헝가리": ("HUN","Hungary","헝가리"),
+    "슬로바키아": ("SVK","Slovakia","슬로바키아"), "슬로베니아": ("SVN","Slovenia","슬로베니아"),
+    "크로아티아": ("HRV","Croatia","크로아티아"), "세르비아": ("SRB","Serbia","세르비아"),
+    "몬테네그로": ("MNE","Montenegro","몬테네그로"), "보스니아헤르체고비나": ("BIH","Bosnia and Herzegovina","보스니아헤르체고비나"),
+    "북마케도니아": ("MKD","North Macedonia","북마케도니아"), "알바니아": ("ALB","Albania","알바니아"),
+    "그리스": ("GRC","Greece","그리스"), "터키": ("TUR","Türkiye","터키"),
+    "루마니아": ("ROU","Romania","루마니아"), "불가리아": ("BGR","Bulgaria","불가리아"),
+    "몰도바": ("MDA","Moldova","몰도바"), "우크라이나": ("UKR","Ukraine","우크라이나"), "벨라루스": ("BLR","Belarus","벨라루스"),
+    "리투아니아": ("LTU","Lithuania","리투아니아"), "라트비아": ("LVA","Latvia","라트비아"), "에스토니아": ("EST","Estonia","에스토니아"),
+    "조지아": ("GEO","Georgia","조지아"), "아르메니아": ("ARM","Armenia","아르메니아"), "아제르바이잔": ("AZE","Azerbaijan","아제르바이잔"),
+    "러시아": ("RUS","Russian Federation","러시아"),
+
+    # 🌍 아프리카
+    "이집트": ("EGY","Egypt","이집트"), "리비아": ("LBY","Libya","리비아"), "알제리": ("DZA","Algeria","알제리"),
+    "모로코": ("MAR","Morocco","모로코"), "튀니지": ("TUN","Tunisia","튀니지"), "수단": ("SDN","Sudan","수단"),
+    "남수단": ("SSD","South Sudan","남수단"), "에티오피아": ("ETH","Ethiopia","에티오피아"),
+    "에리트레아": ("ERI","Eritrea","에리트레아"), "지부티": ("DJI","Djibouti","지부티"),
+    "소말리아": ("SOM","Somalia","소말리아"), "케냐": ("KEN","Kenya","케냐"), "탄자니아": ("TZA","Tanzania","탄자니아"),
+    "우간다": ("UGA","Uganda","우간다"), "르완다": ("RWA","Rwanda","르완다"), "부룬디": ("BDI","Burundi","부룬디"),
+    "콩고민주공화국": ("COD","Democratic Republic of the Congo","콩고민주공화국"),
+    "콩고공화국": ("COG","Republic of the Congo","콩고공화국"),
+    "앙골라": ("AGO","Angola","앙골라"), "잠비아": ("ZMB","Zambia","잠비아"), "짐바브웨": ("ZWE","Zimbabwe","짐바브웨"),
+    "말라위": ("MWI","Malawi","말라위"), "모잠비크": ("MOZ","Mozambique","모잠비크"), "마다가스카르": ("MDG","Madagascar","마다가스카르"),
+    "남아프리카공화국": ("ZAF","South Africa","남아프리카공화국"), "보츠와나": ("BWA","Botswana","보츠와나"),
+    "나미비아": ("NAM","Namibia","나미비아"), "레소토": ("LSO","Lesotho","레소토"), "에스와티니": ("SWZ","Eswatini","에스와티니"),
+    "가나": ("GHA","Ghana","가나"), "코트디부아르": ("CIV","Côte d'Ivoire","코트디부아르"), "나이지리아": ("NGA","Nigeria","나이지리아"),
+    "세네갈": ("SEN","Senegal","세네갈"), "말리": ("MLI","Mali","말리"), "니제르": ("NER","Niger","니제르"),
+    "차드": ("TCD","Chad","차드"), "카메룬": ("CMR","Cameroon","카메룬"), "가봉": ("GAB","Gabon","가봉"),
+    "적도기니": ("GNQ","Equatorial Guinea","적도기니"),
+
+    # 🌎 아메리카
+    "미국": ("USA","United States of America","미국"), "캐나다": ("CAN","Canada","캐나다"),
+    "멕시코": ("MEX","Mexico","멕시코"), "브라질": ("BRA","Brazil","브라질"), "아르헨티나": ("ARG","Argentina","아르헨티나"),
+    "칠레": ("CHL","Chile","칠레"), "페루": ("PER","Peru","페루"), "콜롬비아": ("COL","Colombia","콜롬비아"),
+    "에콰도르": ("ECU","Ecuador","에콰도르"), "우루과이": ("URY","Uruguay","우루과이"), "파라과이": ("PRY","Paraguay","파라과이"),
+    "볼리비아": ("BOL","Bolivia","볼리비아"), "베네수엘라": ("VEN","Venezuela","베네수엘라"),
+    "쿠바": ("CUB","Cuba","쿠바"), "도미니카공화국": ("DOM","Dominican Republic","도미니카공화국"),
+    "자메이카": ("JAM","Jamaica","자메이카"), "아이티": ("HTI","Haiti","아이티"),
+    "코스타리카": ("CRI","Costa Rica","코스타리카"), "파나마": ("PAN","Panama","파나마"),
+    "온두라스": ("HND","Honduras","온두라스"), "엘살바도르": ("SLV","El Salvador","엘살바도르"),
+    "니카라과": ("NIC","Nicaragua","니카라과"), "과테말라": ("GTM","Guatemala","과테말라"),
+
+    # 🌊 오세아니아
+    "호주": ("AUS","Australia","호주"), "뉴질랜드": ("NZL","New Zealand","뉴질랜드"),
+    "파푸아뉴기니": ("PNG","Papua New Guinea","파푸아뉴기니"), "피지": ("FJI","Fiji","피지"),
+    "사모아": ("WSM","Samoa","사모아"), "통가": ("TON","Tonga","통가"), "바누아투": ("VUT","Vanuatu","바누아투"),
 }
+
 REGION_RULES = {
-    "메콩강위원회": [("KHM","Cambodia","캄보디아"), ("LAO","Laos","라오스"), ("THA","Thailand","태국"), ("VNM","Vietnam","베트남")],
-    "호주·한국": [("AUS","Australia","호주"), ("KOR","Korea, Republic of","대한민국")],
-    "중남미 지역": [],
+    "메콩강위원회": [
+        ("KHM","Cambodia","캄보디아"),
+        ("LAO","Laos","라오스"),
+        ("THA","Thailand","태국"),
+        ("VNM","Vietnam","베트남"),
+    ],
+    "호주·한국": [
+        ("AUS","Australia","호주"),
+        ("KOR","Korea, Republic of","대한민국"),
+    ],
+    "중남미 지역": [
+        ("ARG","Argentina","아르헨티나"),("BRA","Brazil","브라질"),("CHL","Chile","칠레"),
+        ("URY","Uruguay","우루과이"),("PRY","Paraguay","파라과이"),("BOL","Bolivia","볼리비아"),
+        ("PER","Peru","페루"),("ECU","Ecuador","에콰도르"),("COL","Colombia","콜롬비아"),
+        ("VEN","Venezuela","베네수엘라"),("GUY","Guyana","가이아나"),("SUR","Suriname","수리남"),
+        ("MEX","Mexico","멕시코"),("GTM","Guatemala","과테말라"),("BLZ","Belize","벨리즈"),
+        ("HND","Honduras","온두라스"),("SLV","El Salvador","엘살바도르"),("NIC","Nicaragua","니카라과"),
+        ("CRI","Costa Rica","코스타리카"),("PAN","Panama","파나마"),
+        ("CUB","Cuba","쿠바"),("DOM","Dominican Republic","도미니카공화국"),("HTI","Haiti","아이티"),
+        ("JAM","Jamaica","자메이카"),("BRB","Barbados","바베이도스"),("BHS","Bahamas","바하마"),
+        ("TTO","Trinidad and Tobago","트리니다드토바고"),("LCA","Saint Lucia","세인트루시아"),
+        ("VCT","Saint Vincent and the Grenadines","세인트빈센트그레나딘"),
+        ("KNA","Saint Kitts and Nevis","세인트키츠네비스"),
+        ("GRD","Grenada","그레나다"),("DMA","Dominica","도미니카연방"),
+        ("ATG","Antigua and Barbuda","앤티가바부다"),("PRI","Puerto Rico","푸에르토리코"),
+        ("VIR","Virgin Islands (U.S.)","미국령 버진 아일랜드"),
+        ("CYM","Cayman Islands","케이맨 제도"),("TCA","Turks and Caicos Islands","터크스 케이커스 제도"),
+        ("ABW","Aruba","아루바"),("CUW","Curaçao","퀴라소"),("SXM","Sint Maarten","신트마르턴"),
+        ("MAF","Saint Martin (French part)","생마르탱"),
+    ],
 }
 
 def split_countries(x: str):
@@ -572,7 +862,7 @@ dfy = expand_years(df)     # 키워드/주제 상대 트렌드는 '국가 중복
 
 # --------------------- 보기 모드 ---------------------
 st.sidebar.header("보기 모드")
-mode = st.sidebar.radio("지도 유형", ["국가별 총계", "WB Class 단일클래스"], index=0)
+mode = st.sidebar.radio("지도 유형", ["국가별 총계", "ICT 유형 단일클래스"], index=0)
 
 # 연도 시각화 옵션 (히트맵 제거)
 st.sidebar.header("연도 시각화 방식")
@@ -711,7 +1001,7 @@ def style_fig(fig, title=None, height=None, legend="top", top_margin=96,
 
 VIZ_BG = {
     "map_total":     "#E8F0FE",   # 국가별 총계 지도 카드
-    "map_wb":        "#F1ECE3",   # WB Class 단일 지도 카드
+    "map_wb":        "#F1ECE3",   # ICT 유형 단일 지도 카드
     "donut_subj":    "#F6F7FB",   # 주제 도넛
     "donut_wb":      "#E8F6EE",   # WB 도넛
     "stack_100":     "#FFF7ED",   # 100% 누적 막대(주제×WB)
@@ -833,7 +1123,7 @@ if mode == "국가별 총계":
                 sub_years = sorted(set(_suby["연도"].dropna().astype(int).tolist()))
                 cA, cB, cC = st.columns(3)
                 with cA: st.metric("연도 범위", f"{min(sub_years) if sub_years else '-'}–{max(sub_years) if sub_years else '-'}")
-                with cB: st.metric("WB Class 고유", f"{sub['WB Class'].astype(str).str.strip().nunique():,}")
+                with cB: st.metric("ICT 유형 고유", f"{sub['ICT 유형'].astype(str).str.strip().nunique():,}")
                 with cC: st.metric("대상기관 수", f"{sub['대상기관'].nunique():,}")
 
             with tab_cloud:
@@ -916,25 +1206,25 @@ if mode == "국가별 총계":
 
             with tab_table:
                 st.markdown("#### 프로젝트 목록")
-                cols_show = ["파일명","지원기관","사업 기간","주제분류(대)", "WB Class","주요 내용","기대 효과","Hashtag_str"]
+                cols_show = ["파일명","지원기관","사업 기간","주제분류(대)", "ICT 유형","주요 내용","기대 효과","Hashtag_str"]
                 st.dataframe(sub[cols_show].drop_duplicates().reset_index(drop=True), use_container_width=True)
     else:
         st.info("상단 지도에서 국가를 클릭하면 상세가 열립니다.")
 
-# ===================== ② WB Class 단일클래스 (지도를 국가 하이라이트로만 사용, 상세는 '클래스 전체' 기준) =====================
-elif mode == "WB Class 단일클래스":
-    st.subheader("WB Class 단일클래스 프로젝트 수")
+# ===================== ② ICT 유형 단일클래스 (지도를 국가 하이라이트로만 사용, 상세는 '클래스 전체' 기준) =====================
+elif mode == "ICT 유형 단일클래스":
+    st.subheader("ICT 유형 단일클래스 프로젝트 수")
 
     # 1) 클래스 선택
-    wb_classes = [c for c in sorted(df["WB Class"].astype(str).str.strip().dropna().unique()) if c and c != "nan"]
+    wb_classes = [c for c in sorted(df["ICT 유형"].astype(str).str.strip().dropna().unique()) if c and c != "nan"]
     if not wb_classes:
-        st.info("WB Class 값이 없습니다.")
+        st.info("ICT 유형 값이 없습니다.")
         st.stop()
 
-    sel = st.selectbox("WB Class 선택", wb_classes, index=0, key="wb_class_select_main")
+    sel = st.selectbox("ICT 유형 선택", wb_classes, index=0, key="wb_class_select_main")
 
     # 2) 지도(개요): 이 Class가 수행된 '국가 하이라이트'만, 클릭은 집계에 영향 X
-    sub_wb_geo = dfx[dfx["WB Class"].astype(str).str.strip() == sel]  # 지도용(국가 확장본 사용)
+    sub_wb_geo = dfx[dfx["ICT 유형"].astype(str).str.strip() == sel]  # 지도용(국가 확장본 사용)
     agg_geo = sub_wb_geo.groupby(["iso3", "country_ko"], as_index=False).agg(n=("파일명", "nunique"))
     value_map = {r.iso3: int(r.n) for _, r in agg_geo.iterrows()}
     gj = augment_geojson_values(world_geojson, key_on_info, value_map, "ksp_wb_cnt")
@@ -957,10 +1247,10 @@ elif mode == "WB Class 단일클래스":
     clicked_iso = extract_iso_from_stfolium(ret)
 
     # 3) 상세 패널 — ★ 핵심: '클래스 전체' 기준으로 집계/시각화 ★
-    st.subheader("상세 패널 — WB Class")
+    st.subheader("상세 패널 — ICT 유형")
 
     # 본문 집계용은 '국가 확장 없는 원본 df'에서 필터 (동일 보고서가 다국가에 중복 집계되는 문제 방지)
-    sub_wb = df[df["WB Class"].astype(str).str.strip() == sel].copy()
+    sub_wb = df[df["ICT 유형"].astype(str).str.strip() == sel].copy()
 
     # 상단 타이틀 + 메트릭
     n_docs = sub_wb["파일명"].nunique()
@@ -1064,7 +1354,7 @@ elif mode == "WB Class 단일클래스":
     # ---- (4) 테이블: 클래스 전체 보고서 목록 ----
     with tab_table:
         st.markdown("#### 프로젝트 목록 (클래스 전체)")
-        cols_show = ["파일명","지원기관","사업 기간","주제분류(대)","WB Class","대상국","대상기관","주요 내용","기대 효과","Hashtag_str"]
+        cols_show = ["파일명","지원기관","사업 기간","주제분류(대)","ICT 유형","대상국","대상기관","주요 내용","기대 효과","Hashtag_str"]
         st.dataframe(sub_wb[cols_show].drop_duplicates().reset_index(drop=True), use_container_width=True)
 
 
@@ -1081,12 +1371,12 @@ fig1 = px.pie(subj_counts, names="주제분류(대)", values="count", hole=0.55)
 # 도넛
 fig1 = style_fig(fig1, "주제분류(대) 분포", legend="right", top_margin=120,
                  bg_color=VIZ_BG["donut_subj"], bg_alpha=0.5)
-# (2) WB Class 도넛
-wb_counts = (df["WB Class"].astype(str).str.strip().replace({"nan":"미분류"})
+# (2) ICT 유형 도넛
+wb_counts = (df["ICT 유형"].astype(str).str.strip().replace({"nan":"미분류"})
              .fillna("미분류").value_counts().reset_index())
-wb_counts.columns = ["WB Class","count"]
-fig2 = px.pie(wb_counts, names="WB Class", values="count", hole=0.55)
-fig2 = style_fig(fig2, "WB Class 분포", legend="right", top_margin=120,
+wb_counts.columns = ["ICT 유형","count"]
+fig2 = px.pie(wb_counts, names="ICT 유형", values="count", hole=0.55)
+fig2 = style_fig(fig2, "ICT 유형 분포", legend="right", top_margin=120,
                  bg_color=VIZ_BG["donut_wb"], bg_alpha=0.5)
 
 c0, c00 = st.columns([1,1], gap="large")
@@ -1094,7 +1384,7 @@ with c0: st.plotly_chart(fig1, use_container_width=True)
 with c00: st.plotly_chart(fig2, use_container_width=True)
 
 # (3) 주제×WB 100% 누적 막대
-cross = (df.assign(WB=df["WB Class"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류"))
+cross = (df.assign(WB=df["ICT 유형"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류"))
            .groupby(["주제분류(대)","WB"], as_index=False).size())
 pivot = cross.pivot(index="주제분류(대)", columns="WB", values="size").fillna(0)
 pivot_pct = pivot.div(pivot.sum(axis=1).replace(0, np.nan), axis=0).fillna(0).reset_index().melt(
@@ -1105,7 +1395,7 @@ fig3.update_layout(bargap=0.68, bargroupgap=0.08)   # 값↑ = 간격↑ = 막�
 
 
 # 100% 누적 막대
-st.plotly_chart(style_fig(fig3, "주제분류(대)별 WB Class 비중 (100%)",
+st.plotly_chart(style_fig(fig3, "주제분류(대)별 ICT 유형 비중 (100%)",
                           legend="right", top_margin=120,
                           bg_color=VIZ_BG["stack_100"], bg_alpha=0.5),
                 use_container_width=True)
@@ -1131,19 +1421,24 @@ def draw_year_chart(g, group_col, title_prefix):
         fig.update_yaxes(autorange="reversed", dtick=1, title="순위(1=최상)")
         return style_fig(fig, f"{title_prefix} — 순위 Bump", legend="top", top_margin=120)
     else:  # 100% 누적 막대
-        fig = px.bar(g, x="연도", y="pct", color=group_col, barmode="stack", labels={"pct":"비중"})
-        fig.update_yaxes(range=[0,1], tickformat=".0%")
-        return style_fig(fig, f"{title_prefix} — 100% 누적 막대", legend="top", top_margin=120)
+        # fig = px.bar(g, x="연도", y="pct", color=group_col, barmode="stack", labels={"pct":"비중"})
+        # fig.update_yaxes(range=[0,1], tickformat=".0%")
+        # return style_fig(fig, f"{title_prefix} — 100% 누적 막대", legend="top", top_margin=120)
+        
+        fig = px.line(g, x="연도", y="pct", color=group_col, labels={"pct": "비중"}, markers=True)  # 각 점을 동그라미로 표시
+        fig.update_yaxes(range=[0, 1], tickformat=".0%")
+        fig.update_layout(title="비율 추세 (라인 플롯)", legend=dict(orientation="h", y=1.1))
+        return style_fig(fig, f"{title_prefix} — 비중 Bump", legend="top", top_margin=120)
 
 if not dfy_valid.empty:
     g_subj = time_share(dfy_valid, "주제분류(대)")
-    g_wb   = time_share(dfy_valid.assign(WB=dfy_valid["WB Class"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류")), "WB")
+    g_wb   = time_share(dfy_valid.assign(WB=dfy_valid["ICT 유형"].astype(str).str.strip().replace({"nan":"미분류"}).fillna("미분류")), "WB")
 else:
     g_subj = pd.DataFrame(columns=["연도","주제분류(대)","size","pct"])
     g_wb   = pd.DataFrame(columns=["연도","WB","size","pct"])
 
 fig4 = draw_year_chart(g_subj, "주제분류(대)", "연도별 주제분류(대) 비중")
-fig5 = draw_year_chart(g_wb, "WB", "연도별 WB Class 비중")
+fig5 = draw_year_chart(g_wb, "WB", "연도별 ICT 유형 비중")
 c1, c2 = st.columns([1,1], gap="large")
 with c1: st.plotly_chart(fig4, use_container_width=True)
 with c2: st.plotly_chart(fig5, use_container_width=True)
@@ -1166,6 +1461,7 @@ BASE_STOP = {
     "산업","세수","세무조직","재정","인사","재무부","투자","통합","훈련","홍보","조정","무역","홍수","클라우드","데이터센터",
     "전자정부","추정","소스","콘텐츠", "조세", "의료", "교통", "ip", "Ip", "인증", "페기물", "납세자", "의약품", "생산성",
     "전자", "감사", "공무원의", "등록", "집행", "사이버", "조세행정", "높여", "원격", "사용자", "콜센터", "기관별", "에너지", "전자조달", "금융", "납세", "정보화",
+    "있음", 
     # 축/라벨 관련 불용어 추가
     "연도","년도","year","years",
     # 영문 상투어
@@ -1193,16 +1489,54 @@ def clean(s): return s.astype(str).str.replace(r"\s+"," ",regex=True).str.strip(
 
 YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 
-def years_from_span(text: str):
-    if not isinstance(text, str): return []
-    t = text.replace("~","-").replace("–","-").replace("—","-")
+# def years_from_span(text: str):
+#     if not isinstance(text, str): return []
+#     t = text.replace("~","-").replace("–","-").replace("—","-")
+#     t = re.sub(r"[()]", " ", t)
+#     ys = [int(y) for y in YEAR_RE.findall(t)]
+#     return list(range(min(ys), max(ys)+1)) if ys else []
+try:
+    YEAR_RE
+except NameError:
+    YEAR_RE = re.compile(r"(?:19|20)\d{2}")
+
+def years_from_span(text):
+    """'2025-2026' → [2025,2026], '2025' → [2025], 숫자(2025)도 허용."""
+    if pd.isna(text):
+        return []
+
+    # 1) 숫자형(정수/실수/넘파이 숫자) 처리
+    if isinstance(text, (int, np.integer)):
+        y = int(text)
+        return [y] if 1990 <= y <= 2035 else []
+    if isinstance(text, (float, np.floating)):
+        y = int(text)
+        return [y] if 1990 <= y <= 2035 else []
+
+    # 2) 문자열 처리
+    t = str(text)
+    t = t.replace("~", "-").replace("–", "-").replace("—", "-")
     t = re.sub(r"[()]", " ", t)
+
+    # 단일 연도들 추출
     ys = [int(y) for y in YEAR_RE.findall(t)]
-    return list(range(min(ys), max(ys)+1)) if ys else []
+    ys = [y for y in ys if 1990 <= y <= 2035]
+
+    # 범위(2025-2026 등) 확장
+    ranges = re.findall(r"((?:19|20)\d{2})\s*-\s*((?:19|20)\d{2})", t)
+    for a, b in ranges:
+        a, b = int(a), int(b)
+        if a <= b:
+            ys.extend(range(a, b + 1))
+        else:
+            ys.extend(range(b, a + 1))
+
+    ys = sorted(set(ys))
+    return ys if ys else []
 
 SYN = {"sme":"SME","pki":"PKI","ai":"AI","ict":"ICT","bigdata":"빅데이터","big data":"빅데이터",
        "e-gp":"전자조달","egp":"전자조달","e-procurement":"전자조달","data center":"데이터센터","cloud":"클라우드",
-       "platform":"플랫폼","platfrom":"플랫폼","플렛폼":"플랫폼"}
+       "platform":"플랫폼","platfrom":"플랫폼","플렛폼":"플랫폼", "ifmis":"IFMIS", "bim":"BIM"}
 
 def norm_token(x: str) -> str:
     x = re.sub(r"[\"'’“”()\[\]{}<>]", "", x.strip()); xl = x.lower()
@@ -1238,7 +1572,7 @@ def build_keyword_time(df_in: pd.DataFrame, stop_extra: set):
 
     # 동적 불용어(대분류/클래스/국가 등)
     dyn = set()
-    for col in ["주제분류(대)","WB Class","대상국","대상기관","지원기관"]:
+    for col in ["주제분류(대)","ICT 유형","대상국","대상기관","지원기관"]:
         if col in df_local.columns: dyn |= set(map(str.lower, df_local[col].astype(str).unique()))
     stopset = {w.lower() for w in stop_extra} | dyn
 
@@ -1507,7 +1841,7 @@ else:
 # 추가 시각화 ②: 대표 '주제(키워드)' 상대 트렌드(상승/하락) — Plotly
 # =====================================================================
 st.markdown("---")
-st.subheader("인간 선정 키워드 상대 트렌드 (상승/하락)")
+st.subheader("분석 기반 키워드 상대 트렌드 (상승/하락)")
 
 THEMES = OrderedDict([
     (r"(전자\s*조달|e[\s\-]*procure(?:ment)?|e[\s\-]*gp\b|joneps|koneps|prozorro)", "전자조달·e-Procurement"),
@@ -1621,6 +1955,81 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
