@@ -1863,23 +1863,26 @@ STOP_CUSTOM_REGEX = [
 ]
 
 STOP_LOW_ALL = (
-    {w.lower() for w in STOP} |
-    {w.lower() for w in STOP_CUSTOM} |
-    {w.lower() for w in globals().get("BASE_STOP", set())}
+    {w.upper() for w in STOP} |
+    {w.upper() for w in STOP_CUSTOM} |
+    {w.upper() for w in globals().get("BASE_STOP", set())}
 )
+
 
 def _blocked_by_regex(tok: str) -> bool:
     if not STOP_CUSTOM_REGEX:
         return False
-    low = str(tok).lower()
+    up = str(tok).upper()
     import re as _re
-    return any(_re.search(p, low) for p in STOP_CUSTOM_REGEX)
+    return any(_re.search(p, up) for p in STOP_CUSTOM_REGEX)
+
     
 # --- 0) 도우미: 동의어/정규화 ---
 def _norm_token(x: str) -> str:
     x = re.sub(r"[\"'’“”()\[\]{}<>]", "", str(x).strip())
-    xl = x.lower()
-    return SYN.get(xl, x)  # 위에 이미 있는 SYN 사용
+    xu = x.upper()  # 🔹 대문자 변환
+    return SYN.get(xu, x)
+
 
 def _is_numericish(s: str) -> bool:
     return bool(re.fullmatch(r"\d+(\.\d+)?", s))
@@ -1953,7 +1956,7 @@ if len(candidates_all) < 25 and HASHTAG_COL:
 
 
 # 상위 300개만 노출
-candidates_all = sorted(candidates_all, key=lambda x: (-x[1], x[0].lower()))[:350]
+candidates_all = sorted(candidates_all, key=lambda x: (-x[1], x[0].lower()))[:300]
 cand_labels = [k for k,_ in candidates_all]
 
 # --- 3) 체크박스 그리드 UI(검색 없음) ---
@@ -2044,6 +2047,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
