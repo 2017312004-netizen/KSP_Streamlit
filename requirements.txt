@@ -9,4 +9,14 @@ Pillow>=10.0
 matplotlib>=3.8
 openpyxl>=3.1
 scikit-learn>=1.4
+
+# 키워드/임베딩
+sentence-transformers==2.6.1
+transformers==4.44.2
+
+# CPU 전용 PyTorch (Streamlit Cloud/리눅스 일반 환경)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2+cpu
+
+# 한국어 형태소
 kiwipiepy==0.19.0
