@@ -160,6 +160,17 @@ STOP = {
 }
 STOP_LOW = {w.lower() for w in STOP}
 
+# ---- Trend config (safe defaults; can be overridden later) ----
+# 코드 어디서든 참조해도 NameError가 안 나도록 안전 기본값을 먼저 깔아둔다.
+YEAR_SOURCE = globals().get("YEAR_SOURCE", None)   # 예: "연도"로 바꾸면 해당 컬럼만 사용
+STOP_CUSTOM = globals().get("STOP_CUSTOM", set())  # 코드에서 직접 추가할 불용어
+BASE_STOP   = globals().get("BASE_STOP", set())
+
+STOP_LOW_ALL = (
+    {w.lower() for w in STOP} |
+    {w.lower() for w in STOP_CUSTOM} |
+    {w.lower() for w in BASE_STOP}
+)
 
 # --------------------- 데이터 입력 ---------------------
 st.sidebar.header("데이터 입력")
@@ -743,44 +754,39 @@ def years_from_span(text):
 
 # === 연도 텍스트 시리즈 선택 ===
 def _year_text_series(df_in: pd.DataFrame) -> pd.Series:
-    """
-    YEAR_SOURCE가 지정되어 있고 존재하면 그 컬럼 사용.
-    아니면 후보 컬럼(사업 기간/연도/기간/Years/Year 등) 중 존재하는 첫 번째.
-    그래도 없으면 요약/주요 내용/파일명 등을 합쳐 텍스트에서 추출.
-    """
-    cand = []
-    if YEAR_SOURCE and YEAR_SOURCE in df_in.columns:
-        cand = [YEAR_SOURCE]
-    else:
-        cand = [c for c in ["사업 기간","연도","기간","Project Period","Years","Year","year"] if c in df_in.columns]
+    """연도 원천: 지정 컬럼 > 관용 컬럼들 > 요약/본문 등 텍스트 결합 → 문자열 시리즈 반환"""
+    ys_col = globals().get("YEAR_SOURCE", None)
+    if ys_col and ys_col in df_in.columns:
+        return df_in[ys_col].astype(str)
 
-    if cand:
-        return df_in[cand[0]].astype(str)
+    for c in ["사업 기간","연도","기간","Project Period","Years","Year","year"]:
+        if c in df_in.columns:
+            return df_in[c].astype(str)
 
     pool = [c for c in ["요약","주요 내용","파일명"] if c in df_in.columns]
     if pool:
         return df_in[pool].fillna("").astype(str).agg(" ".join, axis=1)
 
-    # 최후: 첫 열
-    return df_in.iloc[:,0].astype(str)
+    # 최후: 빈 문자열 시리즈 (길이 맞춰서 반환)
+    return pd.Series([""] * len(df_in), index=df_in.index, dtype=str)
 
 
 @st.cache_data(show_spinner=False)
 def expand_years(df_in: pd.DataFrame) -> pd.DataFrame:
-    """선택/자동 소스에서 연도를 뽑아 explode."""
     if df_in is None or df_in.empty:
-        return pd.DataFrame({"연도": pd.Series([], dtype="Int64")})
+        return pd.DataFrame(columns=["연도"], dtype="Int64")
 
+    # 🔁 여기 한 줄로 통일: 컬럼 유무와 관계없이 안전한 텍스트 소스 확보
     ser = _year_text_series(df_in)
-    years_list = ser.apply(years_from_span).tolist()
-    if not any(years_list):
+
+    years_list = ser.apply(years_from_span)
+    if not years_list.apply(lambda x: len(x) > 0).any():
         return pd.DataFrame({"연도": pd.Series([], dtype="Int64")})
 
-    out = df_in.copy()
-    out["연도목록"] = years_list
-    out = out.explode("연도목록").rename(columns={"연도목록": "연도"})
-    out["연도"] = pd.to_numeric(out["연도"], errors="coerce").astype("Int64")
-    return out
+    dfy = df_in.copy().assign(연도목록=years_list).explode("연도목록").rename(columns={"연도목록": "연도"})
+    dfy["연도"] = pd.to_numeric(dfy["연도"], errors="coerce").astype("Int64")
+    return dfy
+
 
 
 
@@ -1962,6 +1968,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
