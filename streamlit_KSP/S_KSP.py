@@ -1,6 +1,3 @@
-from __future__ import annotations   # 3.9 호환용 (타입힌트)
-GLOBAL_FONT_PATH = None     
-
 # S_KSP_clickpro_v4_plotly_patch_FIXED.py
 # ===============================================
 # KSP Explorer — Leaflet + Plotly (Pro v4 • Plotly patch, FIXED)
@@ -602,26 +599,12 @@ def get_keybert(model_name: str = "intfloat/multilingual-e5-large"):
     except Exception as e:
         return None  # 환경 제한 시 폴백 사용
 
-# ✅ 가드 임포트 (딱 한 곳만)
-try:
-    from kiwipiepy import Kiwi
-    _KIWI_AVAILABLE = True
-except Exception:
-    Kiwi = None
-    _KIWI_AVAILABLE = False
 
-@st.cache_resource(show_spinner=False)
-def get_kiwi():
-    return Kiwi() if _KIWI_AVAILABLE else None
-
-    
-
-USE_KIWI_NOUN_FILTER = True
 
 def extract_nouns_korean(text: str) -> str:
     if not isinstance(text, str) or not text.strip():
         return ""
-    kiwi = get_kiwi()
+    
     if kiwi is None:
         return text  # 설치 안 되어도 죽지 않음
     nouns = []
@@ -2660,6 +2643,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
