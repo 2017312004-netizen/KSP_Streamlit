@@ -1856,7 +1856,7 @@ st.subheader("키워드 트렌드 — 직접 선택 (검색 없음 · 국가/AI 
 # ====================== 사용자 불용어 (코드에서 직접 편집) ======================
 # ↓ 여기에 원하는 불용어를 마음껏 넣으세요 (대소문자 무시)
 STOP_CUSTOM = {
-    "높여", "기관별", "지속가능한", "공무원의", "있음", "사용자자"
+    "높여", "기관별", "지속가능한", "공무원의", "있음", "사용자"
 }
 STOP_CUSTOM_REGEX = [
     # 필요하면 정규식 패턴 추가: r"^제도.?개선$", r".*계획$", ...
@@ -2047,6 +2047,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
