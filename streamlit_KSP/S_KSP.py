@@ -1869,25 +1869,29 @@ if st.sidebar.button("캐시 초기화", use_container_width=True):
 
 # ====================== 사용자 불용어 (코드에서 직접 편집) ======================
 # ====================== 사용자 불용어 ======================
+# ==== 0) 사용자 불용어 (여기만 수정) ====
 STOP_CUSTOM = {"높여", "기관별", "지속가능한", "공무원의", "있음", "사용자"}
-
-# 전처리용 (대문자화 + 공백제거)
 STOP_SET = {w.strip().upper() for w in STOP_CUSTOM if w.strip()}
 
-# -----------------------------------------------------------
+# ==== 1) 헬퍼 ====
+import re
+from collections import Counter
+
 def _norm_token(x: str) -> str:
-    x = re.sub(r"[\"'’“”()\[\]{}<>]", "", str(x).strip())
-    return x.upper()  # 일관되게 대문자만 남김
+    x = re.sub(r'[\"\'’“”()\[\]{}<>]', "", str(x).strip())
+    return x.upper()  # 대문자 기준으로 통일
 
 def _is_numericish(s: str) -> bool:
     return bool(re.fullmatch(r"\d+(\.\d+)?", s))
 
-def collect_hashtag_freq(df_in: pd.DataFrame) -> Counter:
+# ==== 2) 해시태그 빈도 수집 ====
+HASHTAG_COL = "Hashtag" if "Hashtag" in df.columns else ("Hashtag_str" if "Hashtag_str" in df.columns else None)
+
+def collect_hashtag_freq(df_in) -> Counter:
     freq = Counter()
-    col = "Hashtag" if "Hashtag" in df_in.columns else "Hashtag_str"
-    if col not in df_in.columns:
+    if not HASHTAG_COL or HASHTAG_COL not in df_in.columns or df_in[HASHTAG_COL].isna().all():
         return freq
-    for raw in df_in[col].dropna().astype(str):
+    for raw in df_in[HASHTAG_COL].dropna().astype(str):
         for t in re.split(r"[,\;/]| {2,}", raw):
             t = _norm_token(t)
             if not t or len(t) < 2:
@@ -1897,45 +1901,43 @@ def collect_hashtag_freq(df_in: pd.DataFrame) -> Counter:
             freq[t] += 1
     return freq
 
-
-# --- 2) 제외 집합: 국가/지역 + 자동(AI) 키워드 ---
+# ==== 3) 제외세트 (국가/AI 키워드) ====
 COUNTRY_WORDS = set()
-for k,(iso,en,ko) in COUNTRY_MAP.items():
-    COUNTRY_WORDS |= {k.upper(), en.upper(), ko.upper(), iso.upper()}
-if "대상국" in df.columns:
-    for s in df["대상국"].dropna().astype(str):
-        for tok in split_countries(s):
-            COUNTRY_WORDS.add(tok.strip().upper())
+if "COUNTRY_MAP" in globals():
+    for k, (iso, en, ko) in COUNTRY_MAP.items():
+        COUNTRY_WORDS |= {str(k).upper(), str(iso).upper(), str(en).upper(), str(ko).upper()}
 
 AI_SET = set()
-try:
-    AI_SET |= {t.upper() for t in rise_sel} | {t.upper() for t in fall_sel}
-except Exception:
-    pass
+if "rise_sel" in globals() and rise_sel is not None:
+    AI_SET |= {str(t).upper() for t in rise_sel}
+if "fall_sel" in globals() and fall_sel is not None:
+    AI_SET |= {str(t).upper() for t in fall_sel}
 
-def is_excluded_token(tok: str) -> bool:
-    up = tok.upper().strip()
-    return (
-        (up in COUNTRY_WORDS) or
-        (up in AI_SET) or
-        (up in STOP_LOW_ALL) or
-        _is_numericish(up) or
-        _blocked_by_regex(up)
-    )
-
-
-
-# 국가·AI 키워드 제외
-COUNTRY_WORDS = {v.upper() for trip in COUNTRY_MAP.values() for v in trip}
-AI_SET = {t.upper() for t in (rise_sel + fall_sel)} if "rise_sel" in globals() else set()
-
-def is_excluded(tok):
+def is_excluded(tok: str) -> bool:
     t = tok.upper().strip()
     return (t in COUNTRY_WORDS) or (t in AI_SET) or (t in STOP_SET) or _is_numericish(t)
 
+# ==== 4) 여기서 freq_all을 '먼저' 만든 다음 후보 생성 ====
+freq_all = collect_hashtag_freq(df)          # ← 반드시 먼저!
 candidates_all = [(k, c) for k, c in freq_all.items() if not is_excluded(k)]
+
+# 후보가 너무 적으면(예: 불용어가 많을 때) 완화
+if len(candidates_all) < 25 and HASHTAG_COL:
+    tmp = Counter()
+    for raw in df[HASHTAG_COL].dropna().astype(str):
+        for t in re.split(r"[,\;/]| {2,}", raw):
+            t = _norm_token(t)
+            if t and (t not in COUNTRY_WORDS) and (t not in AI_SET) and (t not in STOP_SET) and (not _is_numericish(t)):
+                tmp[t] += 1
+    for k, v in tmp.items():
+        freq_all[k] = max(freq_all.get(k, 0), v)
+    candidates_all = [(k, c) for k, c in freq_all.items()
+                      if (k not in COUNTRY_WORDS) and (k not in AI_SET) and (k not in STOP_SET) and (not _is_numericish(k))]
+
+# 정렬/라벨
 candidates_all = sorted(candidates_all, key=lambda x: (-x[1], x[0]))[:300]
-cand_labels = [k for k,_ in candidates_all]
+cand_labels = [k for k, _ in candidates_all]
+
 
 # --- 3) 체크박스 그리드 UI(검색 없음) ---
 def checkbox_multi(label: str, options: list[str], max_select: int = 30, cols: int = 4) -> list[str]:
@@ -2025,6 +2027,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
