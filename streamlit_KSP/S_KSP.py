@@ -465,7 +465,31 @@ def _brighten_color(c: str, s_scale=1.35, l_shift=-0.05) -> str:
     r2, g2, b2 = colorsys.hls_to_rgb(h, l, s)
     return _to_hex_from_rgb01((r2, g2, b2))
 
-def make_color_map(names, base_colors=_BASE_QUALS, s_scale=1.35, l_shift=-0.05):
+def make_color_map(names, base_colors=None, s_scale=1.35, l_shift=-0.05):
+    """
+    names: 카테고리 이름 리스트
+    base_colors: None이면 전역 _BASE_QUALS를 사용.
+                 _BASE_QUALS가 없거나 비어도 안전하게 기본 팔레트로 대체.
+    """
+    # 1) 베이스 팔레트 확보(안전)
+    if base_colors is None:
+        try:
+            base_colors = _BASE_QUALS
+        except NameError:
+            base_colors = None
+    if not base_colors:  # None or 빈 리스트면 안전한 기본 팔레트로 대체
+        import plotly.express as px
+        base_colors = (
+            px.colors.qualitative.Set1
+            + px.colors.qualitative.Set2
+            + px.colors.qualitative.Set3
+            + px.colors.qualitative.Dark24
+            + px.colors.qualitative.Bold
+            + px.colors.qualitative.Vivid
+        )
+
+    # 2) 순환 매핑
+    import itertools
     cycle = itertools.cycle(base_colors)
     cmap = {}
     for n in names:
@@ -474,9 +498,10 @@ def make_color_map(names, base_colors=_BASE_QUALS, s_scale=1.35, l_shift=-0.05):
             cmap[n] = _brighten_color(raw, s_scale=s_scale, l_shift=l_shift)
     return cmap
 
-# 재생성
+# 재생성 (이 줄은 _BASE_QUALS 정의가 끝난 이후에 두는 것이 가장 깔끔)
 COLOR_WB   = make_color_map(WB_ORDER)
 COLOR_SUBJ = make_color_map(SUBJ_ORDER)
+
 
 def _font_path_safe():
     return GLOBAL_FONT_PATH or find_korean_font()  # 둘 다 없으면 None
@@ -2305,6 +2330,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
