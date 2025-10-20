@@ -1805,181 +1805,153 @@ if all_years:
 else:
     st.info("사업 기간에서 연도를 추출할 수 없어 키워드 상대 트렌드를 건너뜁니다.")
 
-# =====================================================================
-# 키워드 트렌드 — 완전 수동형 (원본 해시태그에서 직접 추출, AI 집합 완전 분리)
-# =====================================================================
+# ===================== 키워드 트렌드 — 직접 선택(상/하 구분 없음) =====================
 st.markdown("---")
-st.subheader("키워드 트렌드 — 수동 선택형 (AI 추출과 완전 분리)")
+st.subheader("키워드 트렌드 — 직접 선택 (상/하 구분 없이 추세만)")
 
-if all_years:
-    # 0) AI 자동 추출 키워드(상/하) 집합을 완전히 배제
-    ai_keys = set()
-    for _maybe in ["rise_sel", "fall_sel"]:
-        if _maybe in globals() and isinstance(globals()[_maybe], (list, set, tuple)):
-            ai_keys |= set(globals()[_maybe])
+# 1) 후보 만들기: 해시태그 전체에서 불용어 제거 + 동의어 통합
+def collect_all_hashtags(df_in: pd.DataFrame) -> list[str]:
+    col = "Hashtag" if "Hashtag" in df_in.columns else ("Hashtag_str" if "Hashtag_str" in df_in.columns else None)
+    if not col or df_in[col].isna().all():
+        return []
+    toks: list[str] = []
+    for s in df_in[col].dropna().astype(str):
+        # 쉼표/세미콜론/슬래시 기준 split
+        parts = re.split(r"[,\;/]| {2,}", s)
+        for t in parts:
+            t = t.strip()
+            if not t:
+                continue
+            # 동의어 정규화
+            t_norm = norm_token(t)
+            # 너무 짧은 것/숫자/불용어 제거
+            core = re.sub(r"\s+", "", t_norm.lower())
+            if len(core) < 2:
+                continue
+            if re.fullmatch(r"\d+(\.\d+)?", core):
+                continue
+            if core in (STOP_LOW | BASE_STOP_LOW):
+                continue
+            toks.append(t_norm)
+    # 최종 중복 제거(대소문자 무시)
+    seen=set(); out=[]
+    for x in sorted(toks, key=str.lower):
+        xl = x.lower()
+        if xl not in seen:
+            seen.add(xl); out.append(x)
+    return out
 
-        # 1) 원본 데이터(df)에서 해시태그 전체 후보 재구성 (정규화 + 불용어 + 동의어)
-    tag_col = None
-    for c in df.columns:
-        if c == "Hashtag_str" or c == "Hashtag":
-            tag_col = c
-            break
+all_hashtags = collect_all_hashtags(df)
+# 너무 적게 나오면(이전 필터가 너무 엄격할 때) 완화: 불용어만 빼고 전부 허용
+if len(all_hashtags) < 20:
+    def loose_collect(df_in):
+        col = "Hashtag" if "Hashtag" in df_in.columns else ("Hashtag_str" if "Hashtag_str" in df_in.columns else None)
+        if not col or df_in[col].isna().all():
+            return []
+        toks=[]
+        for s in df_in[col].dropna().astype(str):
+            for t in re.split(r"[,\;/]| {2,}", s):
+                t=t.strip()
+                if not t: continue
+                core = re.sub(r"\s+", "", t.lower())
+                if len(core)<2 or core in STOP_LOW: continue
+                toks.append(norm_token(t))
+        seen=set(); out=[]
+        for x in sorted(toks, key=str.lower):
+            xl=x.lower()
+            if xl not in seen:
+                seen.add(xl); out.append(x)
+        return out
+    all_hashtags = loose_collect(df)
 
-    if tag_col is None:
-        st.warning("해시태그 컬럼을 찾을 수 없습니다.")
-    else:
-        # (a) 정규화 유틸
-        SYN_MAP = {
-            "sme":"중소기업","pki":"PKI","ai":"AI","ict":"ICT",
-            "bigdata":"빅데이터","big data":"빅데이터","data center":"데이터센터",
-            "cloud":"클라우드","e-gp":"전자조달","egp":"전자조달",
-            "e-procurement":"전자조달","ifmis":"IFMIS","bim":"BIM",
-            "e-invoice":"전자무역·e-Invoice","e invoice":"전자무역·e-Invoice",
-        }
+# 2) 자동(AI) 후보와의 중복은 "표시만" 막기(선택은 사용자가 자유)
+ai_pool = set()
+try:
+    ai_pool |= set(rise_sel) | set(fall_sel)  # 자동 상/하에서 쓰던 리스트가 있으면 사용
+except Exception:
+    pass
+candidates = [x for x in all_hashtags if x not in ai_pool][:500]  # UI용 후보(검색 비활성화)
 
-        def normalize_token(raw: str) -> str | None:
-            if not isinstance(raw, str):
-                return None
-            t = raw.strip()
+# 3) 사용자가 직접 선택(2~30개) + 자유 입력(쉼표로 입력)
+st.caption("AI 자동 키워드와 무관하게, 보고 싶은 키워드를 직접 고르세요. (2–30개)")
+selected_tokens = st.multiselect(
+    "후보 목록 (검색 없음)",
+    options=candidates,
+    default=[],
+    help="상/하 구분 없이 한 그래프에 함께 그립니다."
+)
 
-            # 대괄호/따옴표/샾/괄호 제거
-            t = re.sub(r"^[\[\(\{]+|[\]\)\}]+$", "", t)         # 양끝 괄호류
-            t = t.strip().strip("'\"`“”’‘").strip()              # 따옴표류
-            t = t.lstrip("#").strip()                            # 해시태그 # 제거
-            t = re.sub(r"\s+", " ", t)                           # 다중 공백 정리
-
-            # 리스트 문자열 형태: "['조달','조세']" 같은 경우 안전하게 토큰화
-            # → 이 함수는 단일 토큰용이므로 여기선 단일 항목만 남겨 사용
-            t = t.replace("',", ",").replace("’,", ",").strip()
-            t = t.replace("[", "").replace("]", "")
-
-            if not t or len(t) < 2:
-                return None
-            if re.fullmatch(r"\d+(\.\d+)?", t):                  # 숫자만
-                return None
-
-            low = t.lower()
-            # 동의어/표기 변형 통일
-            t_std = SYN_MAP.get(low, t)
-
-            # 불용어 필터 (기존 STOP + BASE_STOP + 동적 불용어)
-            dyn = set()
-            for col in ["주제분류(대)", "ICT 유형", "대상국", "대상기관", "지원기관"]:
-                if col in df.columns:
-                    dyn |= set(map(str.lower, df[col].astype(str).unique()))
-
-            stop_all = STOP_LOW | BASE_STOP_LOW | dyn
-            if low in stop_all or t_std.lower() in stop_all:
-                return None
-
-            return t_std.strip()
-
-        # (b) 전체 해시태그에서 후보 만들기 (분리자 다양화 + 정규화)
-        bucket: dict[str, int] = {}
-        def bump(tok: str):
-            if not tok:
-                return
-            bucket[tok] = bucket.get(tok, 0) + 1
-
-        for s in df[tag_col].fillna("").astype(str):
-            # 흔한 구분자 + 리스트 문자열 흔적까지 포괄
-            parts = re.split(r"[,\;/|]| {2,}", s.replace("'", " ").replace("`", " ").replace("\"", " "))
-            for p in parts:
-                p = p.strip()
-                if not p:
-                    continue
-                tok = normalize_token(p)
-                if tok:
-                    bump(tok)
-
-        # (c) AI 자동 키워드 완전 배제
-        ai_keys = set()
-        for _maybe in ["rise_sel", "fall_sel"]:
-            if _maybe in globals() and isinstance(globals()[_maybe], (list, set, tuple)):
-                ai_keys |= set(globals()[_maybe])
-        for k in list(bucket.keys()):
-            if k in ai_keys:
-                bucket.pop(k, None)
-
-        # (d) 근사중복 정리: 대소문자/공백/하이픈 차이 통합
-        canon_map: dict[str, str] = {}   # canon -> 대표표기
-        merged: dict[str, int] = {}
-        for k, v in bucket.items():
-            canon = re.sub(r"[\s\-\_]+", "", k).lower()
-            rep = canon_map.get(canon, k)              # 첫 등장 표기를 대표로
-            canon_map[canon] = rep
-            merged[rep] = merged.get(rep, 0) + v
-
-        # (e) 빈도순 상위 N (너무 길면 UI가 무거워지므로 top 300)
-        candidates = [k for k, _ in sorted(merged.items(), key=lambda x: (-x[1], x[0]))][:300]
-
-        st.caption("전처리/불용어/동의어 통합을 적용했습니다. (AI 자동 키워드는 후보에서 제외)")
-        selected_tokens = st.multiselect(
-            "전체 해시태그 후보 (검색 없음)",
-            options=candidates,
-            default=[],
-            help="원본 해시태그(정규화됨)에서 직접 2~30개 선택하세요."
-        )
-
-
-        equalize = st.checkbox("상승/하락 그래프의 키워드 개수를 동일하게 맞추기", value=True)
-
-        # 2) 그래프 생성
-        if st.button("그래프 그리기", type="primary"):
-            if len(selected_tokens) < 2 or len(selected_tokens) > 30:
-                st.warning("키워드를 2~30개 사이로 선택하세요.")
-            else:
-                # 선택 키워드 기반 share/lift 재계산
-                share_sel, lift_sel = build_share_lift(selected_tokens, all_years, kw_doc, docs_per_year)
-
-                win_years = all_years[-min(WINDOW_YEARS, len(all_years)):]
-                years_plot = win_years[-min(RECENT_YEARS * 2, len(win_years)):]  # 최근 10년 등
-
-                share_win = share_sel.loc[win_years]
-                lift_win = lift_sel.loc[win_years]
-                delta_share = (share_win.iloc[-1] - share_win.iloc[0])
-                last_lift = lift_win.iloc[-1]
-                cagr_lift = pd.Series({k: cagr(lift_win[k].values) for k in lift_win.columns})
-
-                sig_up = ((last_lift >= 1.0).astype(int)
-                          + (cagr_lift > 0).astype(int)
-                          + (delta_share > 0).astype(int))
-                sig_down = ((last_lift < 1.0).astype(int)
-                            + (cagr_lift < 0).astype(int)
-                            + (delta_share < 0).astype(int))
-
-                up_keys = [k for k in selected_tokens if k in sig_up.index and sig_up[k] >= 2]
-                down_keys = [k for k in selected_tokens if k in sig_down.index and sig_down[k] >= 2]
-
-                if equalize and up_keys and down_keys:
-                    m = min(len(up_keys), len(down_keys))
-                    up_keys, down_keys = up_keys[:m], down_keys[:m]
-
-                uu, vv = st.columns(2, gap="large")
-
-                with uu:
-                    if up_keys:
-                        fup = plot_trend_plotly(up_keys, years_plot, lift_sel, f"상승세 — 수동 선택 ({len(up_keys)}개)")
-                        fup = style_fig(fup, bg_color=VIZ_BG["trend_up"], bg_alpha=0.5)
-                        fup.update_layout(legend=dict(orientation="h", y=1.10, yanchor="bottom", x=0, xanchor="left"))
-                        fup = add_line_end_labels(fup, years_plot, lift_sel, up_keys)
-                        fup = force_legend_top_padding(fup, base_top=130)
-                        st.plotly_chart(fup, use_container_width=True, config={"displayModeBar": False})
-                    else:
-                        st.info("선택한 키워드 중 상승세 항목이 없습니다.")
-
-                with vv:
-                    if down_keys:
-                        fdn = plot_trend_plotly(down_keys, years_plot, lift_sel, f"하락세 — 수동 선택 ({len(down_keys)}개)")
-                        fdn = style_fig(fdn, bg_color=VIZ_BG["trend_down"], bg_alpha=0.5)
-                        fdn.update_layout(legend=dict(orientation="h", y=1.10, yanchor="bottom", x=0, xanchor="left"))
-                        fdn = add_line_end_labels(fdn, years_plot, lift_sel, down_keys)
-                        fdn = force_legend_top_padding(fdn, base_top=130)
-                        st.plotly_chart(fdn, use_container_width=True, config={"displayModeBar": False})
-                    else:
-                        st.info("선택한 키워드 중 하락세 항목이 없습니다.")
+free_text = st.text_input("직접 입력(쉼표로 구분, 예: e-Procurement, PKI, Cloud)", value="")
+if free_text.strip():
+    extra = [norm_token(x) for x in re.split(r"[,\n]+", free_text) if x.strip()]
 else:
-    st.info("연도 정보를 추출할 수 없어 트렌드를 표시할 수 없습니다.")
+    extra = []
+
+chosen = []
+seen=set()
+for x in (selected_tokens + extra):
+    xl = x.lower().strip()
+    if not xl: continue
+    if xl in (STOP_LOW | BASE_STOP_LOW): continue
+    if xl not in seen:
+        seen.add(xl); chosen.append(x)
+
+if len(chosen) < 2:
+    st.info("키워드를 2개 이상 선택/입력하면 추세를 그립니다.")
+else:
+    # 4) lift 계산은 기존 빌드 결과(lift_all) 재사용; 없으면 즉석 계산
+    try:
+        _lift = lift_all  # 기존 계산 결과(전체 기간용)
+        _years = all_years
+    except Exception:
+        # 백업: 최소 계산
+        yrs_list = df["사업 기간"].apply(years_from_span)
+        _years = sorted({y for ys in yrs_list for y in (ys or [])})
+        if not _years:
+            st.warning("연도를 추출할 수 없어 추세를 그릴 수 없습니다."); st.stop()
+        # 간단한 build
+        col = "Hashtag" if "Hashtag" in df.columns else ("Hashtag_str" if "Hashtag_str" in df.columns else None)
+        kw_doc = {y: Counter() for y in _years}
+        docs_per_year = pd.Series(0, index=_years, dtype=int)
+        for i, row in df.iterrows():
+            ys = years_from_span(row.get("사업 기간", ""))
+            if ys:
+                for y in ys: docs_per_year[y]+=1
+            s = row.get(col, "")
+            toks = []
+            for t in re.split(r"[,\;/]| {2,}", str(s)):
+                t = norm_token(t.strip())
+                if t and t.lower() not in (STOP_LOW | BASE_STOP_LOW):
+                    toks.append(t)
+            for y in ys or []:
+                kw_doc[y].update(set(toks))
+        share = pd.DataFrame({k: jeffreys_rolling_ratio(
+                                pd.Series({y: kw_doc[y][k] for y in _years}, dtype=float),
+                                docs_per_year.astype(float))
+                              for k in set(chosen)}, index=_years)
+        w = docs_per_year / docs_per_year.sum()
+        base = (share.mul(w, axis=0)).sum(axis=0).replace(0, np.nan)
+        _lift = share.div(base, axis=1).replace([np.inf,-np.inf], np.nan).fillna(0.0)
+
+    # 5) 그리기(상/하 구분 없이 한 그래프). 최근 10년 슬라이스
+    years_plot = _years[-min(10, len(_years)):]
+    fig = go.Figure()
+    for k in chosen[:30]:  # 최대 30개
+        if k not in _lift.columns: 
+            continue
+        ys = [float(_lift.loc[y, k]) if y in _lift.index else np.nan for y in years_plot]
+        fig.add_trace(go.Scatter(x=years_plot, y=ys, mode="lines+markers", name=k,
+                                 line=dict(width=3), marker=dict(size=8), connectgaps=True))
+    fig.add_hline(y=1.0, line_width=1.5, line_dash="dash", opacity=0.6)
+    fig.update_xaxes(title_text="연도")
+    fig.update_yaxes(title_text="lift (배)", rangemode="tozero")
+    fig = style_fig(fig, "선택 키워드 트렌드 — 최근 10년", legend="top", top_margin=130,
+                    bg_color=VIZ_BG["trend_up"], bg_alpha=0.35)
+    # 라벨 끝단 정리 + 상단 여백 보정
+    fig = add_line_end_labels(fig, years_plot, _lift, [k for k in chosen if k in _lift.columns])
+    fig = force_legend_top_padding(fig, base_top=130)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
 
 
 
@@ -1987,6 +1959,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
