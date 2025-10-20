@@ -1,3 +1,6 @@
+from __future__ import annotations   # 3.9 호환용 (타입힌트)
+GLOBAL_FONT_PATH = None     
+
 # S_KSP_clickpro_v4_plotly_patch_FIXED.py
 # ===============================================
 # KSP Explorer — Leaflet + Plotly (Pro v4 • Plotly patch, FIXED)
@@ -30,9 +33,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from matplotlib import font_manager, rcParams
 import math
-from functools import lru_cache
-from __future__ import annotations   # 3.9 호환용 (타입힌트)
-GLOBAL_FONT_PATH = None             # 폰트 가드
+from functools import lru_cache     
 
 
 # --------------------- 페이지/테마 ---------------------
@@ -2659,6 +2660,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
