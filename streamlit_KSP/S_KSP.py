@@ -740,32 +740,46 @@ def years_from_span(text):
     years = sorted(set(years))
     return years
 
+
+# === 연도 텍스트 시리즈 선택 ===
+def _year_text_series(df_in: pd.DataFrame) -> pd.Series:
+    """
+    YEAR_SOURCE가 지정되어 있고 존재하면 그 컬럼 사용.
+    아니면 후보 컬럼(사업 기간/연도/기간/Years/Year 등) 중 존재하는 첫 번째.
+    그래도 없으면 요약/주요 내용/파일명 등을 합쳐 텍스트에서 추출.
+    """
+    cand = []
+    if YEAR_SOURCE and YEAR_SOURCE in df_in.columns:
+        cand = [YEAR_SOURCE]
+    else:
+        cand = [c for c in ["사업 기간","연도","기간","Project Period","Years","Year","year"] if c in df_in.columns]
+
+    if cand:
+        return df_in[cand[0]].astype(str)
+
+    pool = [c for c in ["요약","주요 내용","파일명"] if c in df_in.columns]
+    if pool:
+        return df_in[pool].fillna("").astype(str).agg(" ".join, axis=1)
+
+    # 최후: 첫 열
+    return df_in.iloc[:,0].astype(str)
+
+
 @st.cache_data(show_spinner=False)
 def expand_years(df_in: pd.DataFrame) -> pd.DataFrame:
-    """
-    후보 컬럼(우선순위 순)에서 연도 추출:
-      ["사업 기간", "연도", "기간", "Project Period", "Years", "Year", "year"]
-    하나도 없으면 '빈 결과'를 돌려주고, 이후 시각화는 자동 skip.
-    """
-    # 완전 방어
+    """선택/자동 소스에서 연도를 뽑아 explode."""
     if df_in is None or df_in.empty:
         return pd.DataFrame({"연도": pd.Series([], dtype="Int64")})
 
-    cand_cols = ["사업 기간", "연도", "기간", "Project Period", "Years", "Year", "year"]
-    src_col = next((c for c in cand_cols if c in df_in.columns), None)
-    if src_col is None:
+    ser = _year_text_series(df_in)
+    years_list = ser.apply(years_from_span).tolist()
+    if not any(years_list):
         return pd.DataFrame({"연도": pd.Series([], dtype="Int64")})
 
-    # 연도 리스트 추출
-    years_list = df_in[src_col].apply(years_from_span)
-    if not years_list.apply(lambda x: len(x) > 0).any():
-        return pd.DataFrame({"연도": pd.Series([], dtype="Int64")})
-
-    # 임시 컬럼(_years)로 explode → 숫자화 → 최종 '연도'로 rename
     out = df_in.copy()
-    out = out.assign(_years=years_list).explode("_years")  # 여기까지는 object
-    out["_years"] = pd.to_numeric(out["_years"], errors="coerce").astype("Int64")
-    out = out.rename(columns={"_years": "연도"})  # 마지막에만 이름 교체(중복 회피)
+    out["연도목록"] = years_list
+    out = out.explode("연도목록").rename(columns={"연도목록": "연도"})
+    out["연도"] = pd.to_numeric(out["연도"], errors="coerce").astype("Int64")
     return out
 
 
@@ -1454,76 +1468,54 @@ def jeffreys_rolling_ratio(num, den, k=ROLL, alpha=ALPHA):
 @st.cache_data(show_spinner=False)
 def build_keyword_time(df_in: pd.DataFrame, stop_extra: set):
     """
-    - 연도 소스 컬럼을 자동 탐지(사업 기간/연도/기간/Years/Year 등)
-    - 해시태그 컬럼(Hashtag_str/Hashtag)도 자동 탐지
-    - 빈/결측이면 안전하게 빈 구조 반환
+    기존 '사업 기간' 의존 제거 → _year_text_series 사용.
+    나머지 로직은 그대로.
     """
-    if df_in is None or df_in.empty:
+    df_local = df_in.copy()
+
+    # 해시태그 컬럼 정규화
+    ht_col = "Hashtag" if "Hashtag" in df_local.columns else ("Hashtag_str" if "Hashtag_str" in df_local.columns else None)
+    if ht_col:
+        df_local[ht_col] = df_local[ht_col].astype(str).str.strip()
+    else:
+        df_local[ht_col] = ""
+
+    # 연도 리스트
+    years_list = _year_text_series(df_local).apply(years_from_span).tolist()
+    all_years  = sorted({y for ys in years_list for y in (ys or [])})
+    if not all_years:
         return [], {}, pd.Series([], dtype=int), pd.DataFrame()
 
-    # 0) 중복 컬럼명 방어
-    df_local = df_in.loc[:, ~df_in.columns.duplicated()].copy()
-
-    # 1) 연도 소스 컬럼 자동 탐지
-    cand_cols = ["사업 기간", "연도", "기간", "Project Period", "Years", "Year", "year"]
-    src_col = next((c for c in cand_cols if c in df_local.columns), None)
-    if src_col is None:
-        # 연도 정보를 전혀 못 찾으면 빈 구조 반환
-        return [], {}, pd.Series([], dtype=int), df_local
-
-    # 2) 해시태그 컬럼 자동 탐지
-    ht_col = "Hashtag_str" if "Hashtag_str" in df_local.columns else (
-        "Hashtag" if "Hashtag" in df_local.columns else None
-    )
-    if ht_col:
-        df_local[ht_col] = df_local[ht_col].astype(str).str.replace(r"\s+", " ", regex=True).str.strip()
-
-    # 3) 연도 목록 전개
-    years_list = df_local[src_col].apply(years_from_span)
-    all_years = sorted({y for ys in years_list for y in (ys or [])})
-    if not all_years:
-        return [], {}, pd.Series([], dtype=int), df_local
-
-    # 4) 동적 불용어(대분류/클래스/국가/기관/지원기관)
+    # 동적 불용어(대분류/클래스/국가/기관 등)
     dyn = set()
-    for col in ["주제분류(대)", "ICT 유형", "대상국", "대상기관", "지원기관"]:
+    for col in ["주제분류(대)","ICT 유형","대상국","대상기관","지원기관"]:
         if col in df_local.columns:
             dyn |= set(map(str.lower, df_local[col].astype(str).unique()))
-    stopset = {w.lower() for w in (stop_extra or set())} | dyn
+    stopset = {w.lower() for w in stop_extra} | dyn | STOP_LOW_ALL
 
-    # 5) 행별 토큰
-    def split_hashtags_local(s):
-        if not isinstance(s, str) or not s.strip():
-            return []
-        raw = re.split(r"[,\;/]| {2,}", s)
-        out = []
-        for t in raw:
-            t = re.sub(r"[\"'’“”()\[\]{}<>]", "", t.strip())
+    def _split_hashtags(s):
+        toks = []
+        for t in re.split(r"[,\;/]| {2,}", s or ""):
+            t = re.sub(r"^[\"'“”‘’]+|[\"'“”‘’]+$", "", t.strip())  # 양끝 따옴표 제거
             core = re.sub(r"\s+", "", t.lower())
-            if not core or re.fullmatch(r"[\W_]+", core) or re.fullmatch(r"\d+(\.\d+)?", core):
+            if not core or len(core) < 2:
                 continue
-            if len(core) < 2:
+            if core in stopset or re.fullmatch(r"\d+(\.\d+)?", core):
                 continue
-            if core in stopset:
-                continue
-            out.append(t)
-        # 중복 제거 (대소문자 무시 정렬)
-        return sorted(set(out), key=str.lower)
+            toks.append(t)
+        return sorted(set(toks), key=str.lower)
 
-    tokens_by_row = [split_hashtags_local(s) for s in (df_local[ht_col] if ht_col else pd.Series([""] * len(df_local)))]
+    tokens_by_row = [ _split_hashtags(s) for s in df_local[ht_col] ]
 
-    # 6) 연도별 문서 수
+    # 연도별 문서수
     docs_per_year = pd.Series(0, index=all_years, dtype=int)
     for ys in years_list:
-        for y in (ys or []):
-            docs_per_year[y] += 1
+        for y in (ys or []): docs_per_year[y] += 1
 
-    # 7) 연도×키워드 카운터
+    # 연도×키워드 등장 문서수
     kw_doc = {y: Counter() for y in all_years}
-    for i, ys in enumerate(years_list):
-        toks = set(tokens_by_row[i])
-        if not ys or not toks:
-            continue
+    for ys, toks in zip(years_list, tokens_by_row):
+        if not ys or not toks: continue
         for y in ys:
             kw_doc[y].update(toks)
 
@@ -1831,17 +1823,15 @@ def collect_hashtag_freq(df_in: pd.DataFrame) -> Counter:
             core = re.sub(r"\s+", "", t.lower())
             if not core or len(core) < 2: 
                 continue
-            if core in (STOP_LOW | BASE_STOP_LOW) or _is_numericish(core):
+            if core in STOP_LOW_ALL or _is_numericish(core):
                 continue
             freq[t] += 1
     return freq
 
 # --- 2) 제외 집합: 국가/지역 + 자동(AI) 키워드 ---
 COUNTRY_WORDS = set()
-# COUNTRY_MAP의 한글/영문 코드 모두 제외
 for k,(iso,en,ko) in COUNTRY_MAP.items():
     COUNTRY_WORDS |= {k.strip().lower(), en.strip().lower(), ko.strip().lower(), iso.strip().lower()}
-# 데이터 안의 대상국 값도 제외
 if "대상국" in df.columns:
     for s in df["대상국"].dropna().astype(str):
         for tok in split_countries(s):
@@ -1858,27 +1848,29 @@ def is_excluded_token(tok: str) -> bool:
     return (
         (low in COUNTRY_WORDS) or
         (low in AI_SET) or
-        (low in STOP_LOW) or
+        (low in STOP_LOW_ALL) or
         _is_numericish(low)
     )
 
 freq_all = collect_hashtag_freq(df)
 # 후보 정리(국가/AI/불용어 제외)
 candidates_all = [(k, c) for k, c in freq_all.items() if not is_excluded_token(k)]
-# 너무 적으면(예: 전처리로 대부분 날아갈 때) 완화: 불용어/국가만 빼고 모두 허용
+
+# 너무 적으면 완화(국가/AI/숫자만 제외)
 if len(candidates_all) < 25 and HASHTAG_COL:
     tmp = Counter()
     for raw in df[HASHTAG_COL].dropna().astype(str):
         for t in re.split(r"[,\;/]| {2,}", raw):
             t = _norm_token(t.strip())
-            if t and not is_excluded_token(t):
+            core = re.sub(r"\s+", "", t.lower())
+            if t and core not in COUNTRY_WORDS and core not in AI_SET and not _is_numericish(core):
                 tmp[t] += 1
-    # 합치기
     for k,v in tmp.items():
         freq_all[k] = max(freq_all.get(k,0), v)
-    candidates_all = [(k, c) for k, c in freq_all.items() if not is_excluded_token(k)]
+    candidates_all = [(k, c) for k, c in freq_all.items()
+                      if k.lower() not in COUNTRY_WORDS and k.lower() not in AI_SET and not _is_numericish(k.lower())]
 
-# 상위 300개만 노출(너무 길면 느려짐)
+# 상위 300개만 노출
 candidates_all = sorted(candidates_all, key=lambda x: (-x[1], x[0].lower()))[:300]
 cand_labels = [k for k,_ in candidates_all]
 
@@ -1901,20 +1893,14 @@ def checkbox_multi(label: str, options: list[str], max_select: int = 30, cols: i
 
 chosen = checkbox_multi("kw", cand_labels, max_select=30, cols=4)
 
-# (선택이 너무 적을 때 안내)
 if len(chosen) < 2:
     st.info("키워드를 최소 2개 이상 선택하면 아래에 추세 그래프가 표시됩니다.")
     st.stop()
 
-# --- 4) 즉석 계산(lift) — 선택한 키워드만 ---
-# 연도 집계
-years_series = df.get("사업 기간")
-if years_series is None:
-    st.warning("‘사업 기간’ 컬럼이 없어 연도 추출을 할 수 없어요.")
-    st.stop()
-
-years_list = years_series.apply(years_from_span)
-all_years = sorted({y for ys in years_list for y in (ys or [])})
+# --- 4) 연도 집계(!!! 여기 핵심: '사업 기간' 직접 참조 금지) ---
+years_series = _year_text_series(df)                 # <-- 이걸로 연도 소스 자동/지정
+years_list   = years_series.apply(years_from_span)
+all_years    = sorted({y for ys in years_list for y in (ys or [])})
 if not all_years:
     st.warning("연도를 추출할 수 없어서 추세를 그릴 수 없어요.")
     st.stop()
@@ -1926,8 +1912,7 @@ for ys in years_list:
 # 키워드 등장수(연도별, '선택된 것'만 계산)
 kw_doc = {y: Counter() for y in all_years}
 if HASHTAG_COL:
-    for (i, row) in df.iterrows():
-        ys = years_from_span(row.get("사업 기간", ""))
+    for (_, row), ys in zip(df.iterrows(), years_list):
         if not ys: 
             continue
         toks = []
@@ -1935,7 +1920,7 @@ if HASHTAG_COL:
             t = _norm_token(t.strip())
             if t and t in chosen:
                 toks.append(t)
-        if not toks: 
+        if not toks:
             continue
         for y in ys:
             kw_doc[y].update(set(toks))
@@ -1972,10 +1957,12 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
 
+
 # --------------------- 설치 / 실행 ---------------------
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
