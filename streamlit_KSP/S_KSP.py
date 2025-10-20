@@ -1453,32 +1453,82 @@ def jeffreys_rolling_ratio(num, den, k=ROLL, alpha=ALPHA):
 
 @st.cache_data(show_spinner=False)
 def build_keyword_time(df_in: pd.DataFrame, stop_extra: set):
-    df_local = df_in.copy()
-    if HASHTAG_COL:
-        df_local[HASHTAG_COL] = clean(df_local[HASHTAG_COL])
-    years_list = df_local["사업 기간"].apply(years_from_span)
-    all_years  = sorted({y for ys in years_list for y in (ys or [])})
-    if not all_years: return [], {}, pd.Series([], dtype=int), pd.DataFrame()
+    """
+    - 연도 소스 컬럼을 자동 탐지(사업 기간/연도/기간/Years/Year 등)
+    - 해시태그 컬럼(Hashtag_str/Hashtag)도 자동 탐지
+    - 빈/결측이면 안전하게 빈 구조 반환
+    """
+    if df_in is None or df_in.empty:
+        return [], {}, pd.Series([], dtype=int), pd.DataFrame()
 
-    # 동적 불용어(대분류/클래스/국가 등)
+    # 0) 중복 컬럼명 방어
+    df_local = df_in.loc[:, ~df_in.columns.duplicated()].copy()
+
+    # 1) 연도 소스 컬럼 자동 탐지
+    cand_cols = ["사업 기간", "연도", "기간", "Project Period", "Years", "Year", "year"]
+    src_col = next((c for c in cand_cols if c in df_local.columns), None)
+    if src_col is None:
+        # 연도 정보를 전혀 못 찾으면 빈 구조 반환
+        return [], {}, pd.Series([], dtype=int), df_local
+
+    # 2) 해시태그 컬럼 자동 탐지
+    ht_col = "Hashtag_str" if "Hashtag_str" in df_local.columns else (
+        "Hashtag" if "Hashtag" in df_local.columns else None
+    )
+    if ht_col:
+        df_local[ht_col] = df_local[ht_col].astype(str).str.replace(r"\s+", " ", regex=True).str.strip()
+
+    # 3) 연도 목록 전개
+    years_list = df_local[src_col].apply(years_from_span)
+    all_years = sorted({y for ys in years_list for y in (ys or [])})
+    if not all_years:
+        return [], {}, pd.Series([], dtype=int), df_local
+
+    # 4) 동적 불용어(대분류/클래스/국가/기관/지원기관)
     dyn = set()
-    for col in ["주제분류(대)","ICT 유형","대상국","대상기관","지원기관"]:
-        if col in df_local.columns: dyn |= set(map(str.lower, df_local[col].astype(str).unique()))
-    stopset = {w.lower() for w in stop_extra} | dyn
+    for col in ["주제분류(대)", "ICT 유형", "대상국", "대상기관", "지원기관"]:
+        if col in df_local.columns:
+            dyn |= set(map(str.lower, df_local[col].astype(str).unique()))
+    stopset = {w.lower() for w in (stop_extra or set())} | dyn
 
-    tokens_by_row = [split_hashtags(s, stopset) for s in (df_local[HASHTAG_COL] if HASHTAG_COL else pd.Series([""]*len(df_local)))]
+    # 5) 행별 토큰
+    def split_hashtags_local(s):
+        if not isinstance(s, str) or not s.strip():
+            return []
+        raw = re.split(r"[,\;/]| {2,}", s)
+        out = []
+        for t in raw:
+            t = re.sub(r"[\"'’“”()\[\]{}<>]", "", t.strip())
+            core = re.sub(r"\s+", "", t.lower())
+            if not core or re.fullmatch(r"[\W_]+", core) or re.fullmatch(r"\d+(\.\d+)?", core):
+                continue
+            if len(core) < 2:
+                continue
+            if core in stopset:
+                continue
+            out.append(t)
+        # 중복 제거 (대소문자 무시 정렬)
+        return sorted(set(out), key=str.lower)
 
+    tokens_by_row = [split_hashtags_local(s) for s in (df_local[ht_col] if ht_col else pd.Series([""] * len(df_local)))]
+
+    # 6) 연도별 문서 수
     docs_per_year = pd.Series(0, index=all_years, dtype=int)
     for ys in years_list:
-        for y in (ys or []): docs_per_year[y] += 1
+        for y in (ys or []):
+            docs_per_year[y] += 1
 
+    # 7) 연도×키워드 카운터
     kw_doc = {y: Counter() for y in all_years}
     for i, ys in enumerate(years_list):
         toks = set(tokens_by_row[i])
-        if not ys or not toks: continue
+        if not ys or not toks:
+            continue
         for y in ys:
             kw_doc[y].update(toks)
+
     return all_years, kw_doc, docs_per_year, df_local
+
 
 all_years, kw_doc, docs_per_year, _ = build_keyword_time(df, STOP | BASE_STOP)
 
@@ -1845,6 +1895,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
