@@ -1316,10 +1316,32 @@ st.plotly_chart(style_fig(fig3, "주제분류(대)별 ICT 유형 비중 (100%)",
 dfy_valid = dfy.dropna(subset=["연도"]).copy()
 
 def time_share(df_in, group_col):
-    g = df_in.groupby(["연도", group_col], as_index=False).size()
+    """
+    연도별로 group_col(예: '주제분류(대)', '대상국', 'ICT 유형')의 비중을 계산
+    - 중복 컬럼명 및 비정상적 구조(1차원 아님) 자동 방어
+    """
+    # 1) 중복 컬럼 제거
+    df1 = df_in.loc[:, ~df_in.columns.duplicated()].copy()
+
+    # 2) '연도'와 group_col이 DataFrame(중복명)일 경우 첫 열만 사용
+    y = df1["연도"]
+    if isinstance(y, pd.DataFrame):
+        y = y.iloc[:, 0]
+
+    gcol = df1[group_col]
+    if isinstance(gcol, pd.DataFrame):
+        gcol = gcol.iloc[:, 0]
+
+    # 3) 필요한 두 컬럼만 임시 DataFrame으로 구성
+    tmp = pd.DataFrame({"연도": y, group_col: gcol}).dropna(subset=["연도", group_col])
+
+    # 4) 그룹화 및 비중 계산
+    g = tmp.groupby(["연도", group_col], as_index=False).size()
     totals = g.groupby("연도")["size"].transform("sum")
     g["pct"] = g["size"] / totals
+
     return g
+
 
 def draw_year_chart(g, group_col, title_prefix):
     if g.empty:
@@ -1823,6 +1845,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
