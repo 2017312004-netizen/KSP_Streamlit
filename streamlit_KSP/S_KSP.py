@@ -1806,78 +1806,99 @@ else:
     st.info("사업 기간에서 연도를 추출할 수 없어 키워드 상대 트렌드를 건너뜁니다.")
 
 # =====================================================================
-# 키워드 트렌드 — 완전 수동 선택형 (AI 집합 미사용, 검색 없음)
+# 키워드 트렌드 — 완전 수동 (AI 집합과 강제 분리, 검색 없음)
 # =====================================================================
 st.markdown("---")
-st.subheader("키워드 트렌드 — 수동 선택형")
+st.subheader("키워드 트렌드 — 수동 선택형 (AI 추출과 무관)")
 
 if all_years:
-    # 1) 전체 해시태그 풀에서 후보 30개 산출 (AI 추출과 무관)
-    #    - kw_doc: {year: Counter({token:count,...}), ...}  ← 이미 위에서 구축됨
-    #    - 전체 빈도 합산 후 상위 30개만 보여줌 (원하면 숫자 바꿔도 됨)
-    total_freq = Counter()
-    for y in all_years:
-        total_freq.update(kw_doc[y])
+    # 0) AI 자동 섹션에서 계산된 키워드(상/하) 집합을 후보에서 제외 (있으면)
+    ai_keys = set()
+    for _maybe in ["rise_sel", "fall_sel"]:
+        if _maybe in globals() and isinstance(globals()[_maybe], (list, set, tuple)):
+            ai_keys |= set(globals()[_maybe])
 
-    # 불용어/동적 불용어 제거용 stopset (AI 집합과 무관하게 다시 구성)
+    # 1) 전체 해시태그 풀에서 '고를 수 있는 전체 후보' 만들기 (AI 집합 제외)
+    #    - 검색 없음, 그냥 스크롤해서 고르는 멀티셀렉트 + 직접 입력(콤마 구분)
+    #    - 불용어/동적불용어 제거는 유지(원치 않으면 stopset을 빈 집합으로 바꿔도 됨)
     dyn = set()
-    for col in ["주제분류(대)","ICT 유형","대상국","대상기관","지원기관"]:
+    for col in ["주제분류(대)", "ICT 유형", "대상국", "대상기관", "지원기관"]:
         if col in df.columns:
             dyn |= set(map(str.lower, df[col].astype(str).unique()))
     stopset = {w.lower() for w in (STOP | BASE_STOP)} | dyn
 
-    def _keep_token(t):
-        core = re.sub(r"\s+","", str(t)).lower()
-        if not core or len(core) < 2: return False
-        if re.fullmatch(r"\d+(\.\d+)?", core): return False
-        return core not in stopset
+    # 해시태그 원문에서 전부 추출 (AI 결과와 무관하게 처음부터 새로 뽑음)
+    all_tokens_counter = Counter()
+    if HASHTAG_COL:
+        for s in df[HASHTAG_COL].fillna("").astype(str):
+            for t in split_hashtags(s, stopset):
+                all_tokens_counter.update([t])
 
-    # 상위 30개(필터 후)
-    top_candidates = [k for (k, _) in total_freq.most_common(200) if _keep_token(k)][:30]
+    # 후보는 "빈도순 전체"이되, AI가 뽑아둔 키워드는 제외
+    candidate_all = [k for k, _ in all_tokens_counter.most_common() if k not in ai_keys]
 
-    # 2) 선택 UI (검색 없음)
-    st.caption("아래 리스트에서 직접 고르세요. (2~30개)")
-    selected_tokens = st.multiselect(
-        "키워드 선택",
-        options=top_candidates,
+    # 너무 많으면 상위 300개만 노출(원하면 늘리세요). 여전히 AI 키워드는 빠져 있음.
+    candidate_show = candidate_all[:300]
+
+    # 2) 직접 입력(콤마로 구분) + 체크리스트(검색 없음)
+    st.caption("아래 리스트에서 직접 고르거나, 상단에 직접 입력(콤마 구분)하세요. (2~30개)")
+    manual_input = st.text_input("직접 입력 (예: e-Procurement, PKI, Cloud)", value="")
+    picked_from_list = st.multiselect(
+        "전체 해시태그 후보 (AI 자동 키워드는 제외되어 있습니다)",
+        options=candidate_show,
         default=[],
-        help="AI 자동 결과와 무관합니다. 전체 해시태그 풀에서 빈도 상위 30개만 노출합니다."
+        help="검색 기능 없이 스크롤/체크로만 선택합니다."
     )
 
-    # 3) 균형 옵션: 상승/하락 그래프 키워드 수 동일
-    equalize = st.checkbox("상승/하락 그래프의 키워드 수를 동일하게 맞추기", value=True)
+    # 직접 입력 파싱
+    def _parse_manual(s):
+        if not s.strip():
+            return []
+        out = []
+        for tok in re.split(r"[,\;/]+", s):
+            tok = norm_token(tok)
+            core = re.sub(r"\s+", "", tok.lower())
+            if core and len(core) >= 2 and not re.fullmatch(r"\d+(\.\d+)?", core):
+                out.append(tok)
+        return sorted(set(out), key=str.lower)
 
-    # 4) 그리기 버튼
+    manual_tokens = _parse_manual(manual_input)
+
+    # 최종 선택 집합 (중복 제거)
+    selected_tokens = sorted(set(picked_from_list) | set(manual_tokens), key=str.lower)
+
+    # 3) 균형 옵션: 상승/하락 그래프 키워드 수 동일 강제
+    equalize = st.checkbox("상승/하락 그래프의 키워드 개수를 동일하게 강제", value=True)
+
+    # 4) 그리기
     if st.button("그래프 그리기", type="primary"):
         if len(selected_tokens) < 2 or len(selected_tokens) > 30:
-            st.warning("키워드를 2~30개 사이로 선택하세요.")
+            st.warning("키워드를 2~30개 사이로 선택하거나 입력하세요.")
         else:
-            # 수동 선택된 키워드만 사용해 share/lift 재계산
+            # 선택된 키워드만으로 새로 share/lift 계산
             share_sel, lift_sel = build_share_lift(selected_tokens, all_years, kw_doc, docs_per_year)
 
-            # 최근 창(윈도) 재사용
-            win_years = all_years[-min(WINDOW_YEARS, len(all_years)):]
+            win_years  = all_years[-min(WINDOW_YEARS, len(all_years)):]
             years_plot = win_years[-min(RECENT_YEARS*2, len(win_years)):]  # 최근 10년 등
 
-            # 지표 계산 (상/하 분류용) — 선택된 키워드만
             share_win = share_sel.loc[win_years]
             lift_win  = lift_sel.loc[win_years]
-            latest_share = share_win.iloc[-1]
-            delta_share  = (share_win.iloc[-1] - share_win.iloc[0])      # p.p. 변화
-            last_lift    = lift_win.iloc[-1]
-            cagr_lift    = pd.Series({k: cagr(lift_win[k].values) for k in lift_win.columns})
+            delta_share = (share_win.iloc[-1] - share_win.iloc[0])      # p.p. 변화
+            last_lift   = lift_win.iloc[-1]
+            cagr_lift   = pd.Series({k: cagr(lift_win[k].values) for k in lift_win.columns})
 
+            # 2-of-3 규칙으로 상/하 분류
             sig_up   = ((last_lift >= 1.0).astype(int) + (cagr_lift > 0).astype(int) + (delta_share > 0).astype(int))
             sig_down = ((last_lift < 1.0).astype(int)  + (cagr_lift < 0).astype(int) + (delta_share < 0).astype(int))
 
             up_keys   = [k for k in selected_tokens if (k in sig_up.index   and sig_up[k]   >= 2)]
             down_keys = [k for k in selected_tokens if (k in sig_down.index and sig_down[k] >= 2)]
 
+            # 균형 강제
             if equalize and up_keys and down_keys:
                 m = min(len(up_keys), len(down_keys))
                 up_keys, down_keys = up_keys[:m], down_keys[:m]
 
-            # 5) 시각화
             uu, vv = st.columns(2, gap="large")
 
             with uu:
@@ -1910,6 +1931,7 @@ else:
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
