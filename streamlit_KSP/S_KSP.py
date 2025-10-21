@@ -1859,6 +1859,8 @@ elif mode == "ICT 유형 단일클래스":
             seed      = int(st.session_state.get("seed", 42))
             
             kw_selected = mmr_select_text(candidates, k=k, lambda_div=diversity)
+            st.caption(f"[debug] k={st.session_state.get('topk_auto')} / candidates={len(candidates)} / selected={len(kw_selected)}")
+
 
 
 
@@ -2670,6 +2672,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
