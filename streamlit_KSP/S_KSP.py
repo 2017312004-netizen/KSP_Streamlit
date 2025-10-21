@@ -661,7 +661,7 @@ GENERIC_KO = {
     "국세청", "자문", "시민들", "문서", "세르비아", "가입", "창출", "기업들", "crm", "육성", "장애", "인재", "협업", "기초", "업그레이드", "백업", "기관별", "유역", "의료", "환자", "안보", "지속가능성", "콘텐츠", "넘어", "증진", "공정한", "불평등", "피해", "칠레", "극복하기", "회계", "일부", "향후", "제공한다", "재정관리",
     "지원한다", "부가가치", "생산", "국가를", "분석합니다", "요인", "중점", "부족", "공공부문", "공공조달", "강화하", "오프라인", "탈세", "증대", "타지키스탄", "단지", "리투아니아", "말레이시아", "대응책", "탄자니아", "db", "이행계획", "벨라루스", "모로코", "브라질", "몰도바", "경영평", "우크라이나", "조지아", "카타르", "르완다",
     "케냐", "호주", "태국", "건설산업", "아크라", "대역", "학생", "DMA", "지질", "소득세", "운영자", "자메이카", "하드웨어", "수수료", "윤리", "아프리카", "도입률", "위험기반", "금융결제원", "문해력", "D-IP", "법인세", "오프", "ID", "상암", "메콩강위원회", "산업혁명", "범위", "만이", "농촌", "공정", "스마트시티로",
-    "조직적", "SUPPORTERS", "지식관리", "MRC", "19", "세수입", "공무원연금"
+    "조직적", "SUPPORTERS", "지식관리", "MRC", "19", "세수입", "공무원연금", "코스타리카"
 }
 GENERIC_EN = {
     "data","digital","service","services","system","systems","platform","portal","project","program","policy","policies",
@@ -2657,6 +2657,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
