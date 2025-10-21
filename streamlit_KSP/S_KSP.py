@@ -2500,7 +2500,7 @@ with st.sidebar.expander("환경 점검", expanded=False):
 # ==== 0) 사용자 불용어 (여기만 수정) ====
 STOP_CUSTOM = {"높여", "기관별", "지속가능한", "공무원의", "있음", "사용자", "경제", "중소기업의", "조달", "공공", "개혁을", "기업들의", "라오스의", "분석",
                "전략을", "제도의", "체계적으로", "통계", "표준화", "것이다", "베트남의", "과테말라의", "메콩강", "시스템을", "이집트의", "통합", "필리핀의", 
-               "산업", "혁신", "가나의", "전환", "집행", "파라과이의", "검색", "규제", "기술", "생태계를", "처리", "협력", "등록", "납세자", "폐기물"}
+               "산업", "혁신", "가나의", "전환", "집행", "파라과이의", "검색", "규제", "기술", "생태계를", "처리", "협력", "등록", "납세자", "폐기물", "정부", "민간", "투자", "예산"}
 STOP_SET = {w.strip().upper() for w in STOP_CUSTOM if w.strip()}
 
 # ==== 1) 헬퍼 ====
@@ -2657,6 +2657,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
