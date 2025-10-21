@@ -599,19 +599,80 @@ def get_keybert(model_name: str = "intfloat/multilingual-e5-large"):
     except Exception as e:
         return None  # 환경 제한 시 폴백 사용
 
+USE_NOUN_FILTER: bool = True   # ← 명사 필터 사용 여부(사이드바 토글로 바꿔도 됨)
 
+# ==== 규칙 기반 한국어/영문 명사 필터 (kiwi 불필요) ====
+_HANGUL_RE = re.compile(r"[가-힣]+")
+# 토큰 분할: 한글/영문/숫자 블록을 보존하면서 나머지로 분할
+_TOKEN_RE = re.compile(r"[A-Za-z]+(?:[-_][A-Za-z0-9]+)*|[0-9]+(?:\.[0-9]+)?|[가-힣]+")
+
+# 조사/어미·접미 규칙(간단)
+#   - 조사: 은는이가을를의에에서으로과와도만랑랑은즈… 등 자주 등장하는 것 위주
+#   - 어미/형용: 하다/적인/스럽다/되다/시키다 등 후행 어절 제거
+#   - 한글자(특수기호/숫자) 단독 토큰 제거
+_KO_POSTFIX_DROP = (
+    "하다","적인","스러운","스러움","스럽다","되다","시키다","되며","하며","하다가",
+    "으로","부터","처럼","까지","대로","라서","면서","면서도","하면서",
+    "에서","에게","에게서","한테","이라서","이라도",
+)
+# 단일 조사(어절 끝 한 글자) – 과도 제거나 오탐 방지 위해 매우 제한적
+_KO_SINGLE_PARTICLE = set(list("은는이가을를의에와과도만"))
+# 영문 불용 짧은 토큰(대문자 약어는 살릴지 선택): 여기선 2자 미만 컷
+_EN_SHORT_MIN = 2
+
+def _strip_ko_suffix(tok: str) -> str:
+    # 긴 접미 먼저
+    for suf in _KO_POSTFIX_DROP:
+        if tok.endswith(suf) and len(tok) > len(suf) + 1:
+            tok = tok[: -len(suf)]
+            break
+    # 단일 조사 제거(끝 한 글자)
+    if len(tok) >= 3 and tok[-1] in _KO_SINGLE_PARTICLE:
+        tok = tok[:-1]
+    return tok
+
+def _valid_token(tok: str) -> bool:
+    if not tok: 
+        return False
+    # 숫자만
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", tok):
+        return False
+    # 한 글자 한글/영문은 버림(약어 예외를 두고 싶으면 조정)
+    if len(tok) == 1:
+        return False
+    return True
 
 def extract_nouns_korean(text: str) -> str:
+    """
+    간단 규칙 기반 명사 추출:
+      - 토큰 분해 → 후행 조사/어미/접미 제거 → 짧은 토큰/숫자 제거 → 상투 불용어 필터
+      - 한국어/영문 혼합 문서에서 '명사성' 토큰만 남겨 downstream(KeyBERT 등) 품질을 높임
+    """
     if not isinstance(text, str) or not text.strip():
         return ""
-    
-    if kiwi is None:
-        return text  # 설치 안 되어도 죽지 않음
-    nouns = []
-    for tok in kiwi.tokenize(text):
-        if tok.tag in ("NNG", "NNP") or tok.tag == "SL":
-            nouns.append(tok.form)
-    return " ".join(nouns)
+    toks = _TOKEN_RE.findall(text)
+
+    out = []
+    for t in toks:
+        if _HANGUL_RE.fullmatch(t):
+            t = _strip_ko_suffix(t)
+            t = t.strip()
+            if not t:
+                continue
+            # 불용어(상단에 이미 STOP/BASE_STOP/STOP_CUSTOM/STRONG_STOP 등 있음)
+            if t.lower() in STRONG_STOP:
+                continue
+            if _valid_token(t):
+                out.append(t)
+        else:
+            # 영문/혼합: 소문자화 후 최소 길이, 불용어 컷
+            tl = t.lower()
+            if len(tl) < _EN_SHORT_MIN:
+                continue
+            if tl in STRONG_STOP:
+                continue
+            out.append(tl)
+    return " ".join(out)
 
 def _prep_docs(df_in: pd.DataFrame, text_cols: list[str]) -> list[str]:
     cols = [c for c in (text_cols or []) if c in df_in.columns]
@@ -620,10 +681,11 @@ def _prep_docs(df_in: pd.DataFrame, text_cols: list[str]) -> list[str]:
         t = " ".join(str(r.get(c, "") or "") for c in cols).strip()
         if not t:
             continue
-        if USE_KIWI_NOUN_FILTER:
-            t = extract_nouns_korean(t)
+        if USE_NOUN_FILTER:
+            t = extract_nouns_korean(t)   # ← kiwi 없이 규칙 기반 필터
         out.append(t)
     return out
+
 
 
 # ===== 강한 stop/필터 =====
@@ -774,12 +836,13 @@ def _docs_texts(df_in: pd.DataFrame, text_cols: List[str]) -> List[str]:
 
 
 @st.cache_resource(show_spinner=False)
-def get_sbert(model_name: str = "intfloat/multilingual-e5-larg"):
+def get_sbert(model_name: str = "intfloat/multilingual-e5-large"):
     try:
         from sentence_transformers import SentenceTransformer
         return SentenceTransformer(model_name)
     except Exception:
         return None
+
 
 
 
@@ -2650,6 +2713,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
