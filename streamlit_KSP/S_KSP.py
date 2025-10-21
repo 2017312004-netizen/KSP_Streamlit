@@ -1850,7 +1850,16 @@ elif mode == "ICT 유형 단일클래스":
                 ngram_bonus=(0.10, 0.20)  # 2/3그램 보너스
             )
 
-            kw_selected = mmr_select_text(candidates, k=8, lambda_div=float(st.session_state.get("diversity", 0.65)))
+            # 안전 기본값 + 클램프
+            k_req = int(st.session_state.get("topk_auto", 8))
+            k     = max(1, min(k_req, 8))  # 예: 1~12 범위로 제한 (원하면 8로 고정: k = 8)
+            
+            diversity = float(st.session_state.get("diversity", 0.65))
+            per_kw    = int(st.session_state.get("per_kw", 2))
+            seed      = int(st.session_state.get("seed", 42))
+            
+            kw_selected = mmr_select_text(candidates, k=k, lambda_div=diversity)
+
 
 
 
@@ -2661,6 +2670,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
