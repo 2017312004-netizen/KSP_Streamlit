@@ -1843,9 +1843,17 @@ elif mode == "ICT 유형 단일클래스":
                 top_n=80,                 # 넉넉히 뽑아놓고
                 ngram_bonus=(0.10, 0.20)  # 2/3그램 보너스
             )
+
+            # 안전 기본값(위젯이 아직 없거나 스코프가 다를 때 보호)
+            topk_auto = st.session_state.get("topk_auto", 8)
+            diversity = st.session_state.get("diversity", 0.65)
+            per_kw    = st.session_state.get("per_kw", 2)
+            seed      = st.session_state.get("seed", 42)
             
-            # (4) 다양성 선택(MMR, 임베딩 없이)
             kw_selected = mmr_select_text(candidates, k=int(topk_auto), lambda_div=float(diversity))
+
+            
+           
             
             # (5) 문장 샘플링/표시 (기존 로직 재사용)
             if not kw_selected:
@@ -2651,6 +2659,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
