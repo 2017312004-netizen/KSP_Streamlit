@@ -588,76 +588,47 @@ def sample_sentences_for_keyword(df_in: pd.DataFrame, kw: str, text_cols: list[s
 
 USE_NOUN_FILTER: bool = True   # ← 명사 필터 사용 여부(사이드바 토글로 바꿔도 됨)
 
-# ==== 규칙 기반 한국어/영문 명사 필터 (kiwi 불필요) ====
-_HANGUL_RE = re.compile(r"[가-힣]+")
-# 토큰 분할: 한글/영문/숫자 블록을 보존하면서 나머지로 분할
-_TOKEN_RE = re.compile(r"[A-Za-z]+(?:[-_][A-Za-z0-9]+)*|[0-9]+(?:\.[0-9]+)?|[가-힣]+")
+# ==== 규칙 기반 명사 필터 (kiwi 불필요) ====
 
-# 조사/어미·접미 규칙(간단)
-#   - 조사: 은는이가을를의에에서으로과와도만랑랑은즈… 등 자주 등장하는 것 위주
-#   - 어미/형용: 하다/적인/스럽다/되다/시키다 등 후행 어절 제거
-#   - 한글자(특수기호/숫자) 단독 토큰 제거
+_HANGUL_RE = re.compile(r"[가-힣]+")
+_TOKEN_RE  = re.compile(r"[A-Za-z]+(?:[-_][A-Za-z0-9]+)*|[0-9]+(?:\.[0-9]+)?|[가-힣]+")
 _KO_POSTFIX_DROP = (
     "하다","적인","스러운","스러움","스럽다","되다","시키다","되며","하며","하다가",
     "으로","부터","처럼","까지","대로","라서","면서","면서도","하면서",
     "에서","에게","에게서","한테","이라서","이라도",
 )
-# 단일 조사(어절 끝 한 글자) – 과도 제거나 오탐 방지 위해 매우 제한적
 _KO_SINGLE_PARTICLE = set(list("은는이가을를의에와과도만"))
-# 영문 불용 짧은 토큰(대문자 약어는 살릴지 선택): 여기선 2자 미만 컷
 _EN_SHORT_MIN = 2
 
 def _strip_ko_suffix(tok: str) -> str:
-    # 긴 접미 먼저
     for suf in _KO_POSTFIX_DROP:
         if tok.endswith(suf) and len(tok) > len(suf) + 1:
-            tok = tok[: -len(suf)]
+            tok = tok[:-len(suf)]
             break
-    # 단일 조사 제거(끝 한 글자)
     if len(tok) >= 3 and tok[-1] in _KO_SINGLE_PARTICLE:
         tok = tok[:-1]
     return tok
 
 def _valid_token(tok: str) -> bool:
-    if not tok: 
-        return False
-    # 숫자만
-    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", tok):
-        return False
-    # 한 글자 한글/영문은 버림(약어 예외를 두고 싶으면 조정)
-    if len(tok) == 1:
-        return False
+    if not tok: return False
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", tok): return False
+    if len(tok) == 1: return False
     return True
 
 def extract_nouns_korean(text: str) -> str:
-    """
-    간단 규칙 기반 명사 추출:
-      - 토큰 분해 → 후행 조사/어미/접미 제거 → 짧은 토큰/숫자 제거 → 상투 불용어 필터
-      - 한국어/영문 혼합 문서에서 '명사성' 토큰만 남겨 downstream(KeyBERT 등) 품질을 높임
-    """
-    if not isinstance(text, str) or not text.strip():
-        return ""
+    if not isinstance(text, str) or not text.strip(): return ""
     toks = _TOKEN_RE.findall(text)
-
     out = []
     for t in toks:
         if _HANGUL_RE.fullmatch(t):
-            t = _strip_ko_suffix(t)
-            t = t.strip()
-            if not t:
-                continue
-            # 불용어(상단에 이미 STOP/BASE_STOP/STOP_CUSTOM/STRONG_STOP 등 있음)
-            if t.lower() in STRONG_STOP:
-                continue
-            if _valid_token(t):
-                out.append(t)
+            t = _strip_ko_suffix(t).strip()
+            if not t: continue
+            if t.lower() in STOP_ALL: continue
+            if _valid_token(t): out.append(t)
         else:
-            # 영문/혼합: 소문자화 후 최소 길이, 불용어 컷
             tl = t.lower()
-            if len(tl) < _EN_SHORT_MIN:
-                continue
-            if tl in STRONG_STOP:
-                continue
+            if len(tl) < _EN_SHORT_MIN: continue
+            if tl in STOP_ALL: continue
             out.append(tl)
     return " ".join(out)
 
@@ -666,12 +637,12 @@ def _prep_docs(df_in: pd.DataFrame, text_cols: list[str]) -> list[str]:
     out = []
     for _, r in df_in.iterrows():
         t = " ".join(str(r.get(c, "") or "") for c in cols).strip()
-        if not t:
-            continue
+        if not t: continue
         if USE_NOUN_FILTER:
-            t = extract_nouns_korean(t)   # ← kiwi 없이 규칙 기반 필터
+            t = extract_nouns_korean(t)
         out.append(t)
     return out
+
 
 
 
@@ -696,6 +667,18 @@ GENERIC_EN = {
 }
 STRONG_STOP = {s.lower() for s in (STOP | BASE_STOP | STOP_CUSTOM | GENERIC_KO | GENERIC_EN)}
 
+# 이미 정의된 STOP/BASE_STOP/STOP_CUSTOM/GENERIC_KO/GENERIC_EN을 한데 모아 통합
+def _collect_stop_all():
+    STOP_ALL = set()
+    for s in [globals().get("STOP"), globals().get("BASE_STOP"),
+              globals().get("STOP_CUSTOM"), globals().get("GENERIC_KO"),
+              globals().get("GENERIC_EN"), globals().get("STOP_LOW_ALL")]:
+        if s:
+            STOP_ALL |= {str(w).lower() for w in s}
+    return STOP_ALL
+
+STOP_ALL = _collect_stop_all()
+
 def _normalize_token(t: str) -> str:
     t = re.sub(r"[\"'’“”()\[\]{}<>]", "", str(t)).strip()
     t = re.sub(r"\s{2,}", " ", t)
@@ -711,58 +694,77 @@ def _is_valid_kw(t: str) -> bool:
     return (t.lower() not in STRONG_STOP)
 
 
-def tfidf_keywords_for_docs(
-    docs: list[str],
-    top_n: int = 30,
-    ngram_range=(1, 2),
-    min_df=2,
-    max_df=0.9,
+from collections import Counter
+import numpy as np
+
+def contrastive_keywords_tfidf(
+    docs_class: list[str],
+    docs_neg: list[str],
+    top_n: int = 60,
+    ngram_bonus=(0.10, 0.20),
+    eps: float = 1e-6,
 ) -> list[tuple[str, float]]:
     """
-    문서군 평균 TF-IDF 점수로 상위 n-그램 키워드 산출.
-    반환: [(term, score)] 내림차순.
+    score = log((tf_c/len_c + eps) / (tf_n/len_n + eps)) * log(1 + N / df)
+            + n-그램 보너스
+    - 불용어(STOP_ALL) 적용
+    - KeyBERT/임베딩 없이 '클래스 vs 나머지' 대비로 구분력 확보
     """
-    if not docs:
-        return []
+    def _tokenize_for_vocab(docs):
+        out = []
+        for d in docs:
+            if not isinstance(d, str) or not d.strip():
+                out.append([])
+                continue
+            toks = re.split(r"\s+", d.strip())
+            toks = [t.lower() for t in toks if t and t.lower() not in STOP_ALL]
+            out.append(toks)
+        return out
 
-    def _clean(s):
-        s = re.sub(r"\s+", " ", str(s) if s is not None else "").strip()
-        return s
+    toks_c = _tokenize_for_vocab(docs_class)
+    toks_n = _tokenize_for_vocab(docs_neg)
 
-    docs = [_clean(d) for d in docs if isinstance(d, str) and d.strip()]
-    if not docs:
-        return []
+    N_docs = len(toks_c) + len(toks_n)
+    df_term, cnt_c, cnt_n = Counter(), Counter(), Counter()
+    len_c = len_n = 0
 
-    vec = TfidfVectorizer(
-        analyzer="word",
-        ngram_range=ngram_range,
-        min_df=min_df,
-        max_df=max_df,
-        token_pattern=r"(?u)\b\w+\b"
-    )
-    X = vec.fit_transform(docs)              # (n_docs, n_terms)
-    terms = np.array(vec.get_feature_names_out())
-    scores = np.asarray(X.mean(axis=0)).ravel()
+    for toks in toks_c + toks_n:
+        if not toks: continue
+        for t in set(toks): df_term[t] += 1
 
-    # 전역 불용어 제거(이미 상단 STRONG_STOP 구성이 있음)
-    mask = np.array([t.lower() not in STRONG_STOP for t in terms], dtype=bool)
-    terms, scores = terms[mask], scores[mask]
+    for toks in toks_c:
+        cnt_c.update(toks); len_c += len(toks)
+    for toks in toks_n:
+        cnt_n.update(toks); len_n += len(toks)
 
-    # 상위 후보 선별 + 근접중복(부분문자열) 제거
-    order = np.argsort(-scores)
+    len_c = max(len_c, 1); len_n = max(len_n, 1)
+
     picked = []
-    seen = []
-    for i in order:
-        term = terms[i]
-        sc = float(scores[i])
-        low = term.lower()
+    for t in set(cnt_c.keys()) | set(cnt_n.keys()):
+        if t in STOP_ALL: 
+            continue
+        tfc = cnt_c[t] / len_c
+        tfn = cnt_n[t] / len_n
+        lift = np.log((tfc + eps) / (tfn + eps))
+        idf  = np.log(1.0 + N_docs / max(1, df_term[t]))
+        score = lift * idf
+        n = len(t.split())
+        if n == 2: score += ngram_bonus[0]
+        elif n >= 3: score += ngram_bonus[1]
+        picked.append((t, float(score)))
+
+    picked.sort(key=lambda x: x[1], reverse=True)
+    uniq, seen = [], []
+    for term, sc in picked:
+        low = term
         if any(low in s or s in low for s in seen):
             continue
         seen.append(low)
-        picked.append((term, sc))
-        if len(picked) >= top_n * 2:
+        uniq.append((term, sc))
+        if len(uniq) >= top_n:
             break
-    return picked[:top_n]
+    return uniq
+
 
 
 def mmr_select_text(
@@ -1837,51 +1839,46 @@ elif mode == "ICT 유형 단일클래스":
             st.markdown("#### 대표 키워드 문장 발췌 (임베딩 기반 · TF-IDF)")
         
             # (1) 텍스트 컬럼 자동 선택 (full_text > 주요 내용 > 요약)
+            # (1) 텍스트 컬럼 자동 선택
             pref_cols = ["full_text", "주요 내용", "요약"]
             text_cols = [c for c in pref_cols if c in sub_wb.columns]
             if not text_cols:
                 st.info("문장 발췌에 사용할 텍스트 컬럼이 없습니다. (full_text/주요 내용/요약 중 하나 필요)")
                 st.stop()
-        
-            # (2) 최소 UI — 기본은 '자동 발췌'
-            auto_mode = st.toggle("자동 발췌 (TF-IDF)", value=True, help="해당 ICT 유형을 대표하는 키워드를 임베딩 기반으로 자동 추출")
-            with st.expander("고급 옵션", expanded=False):
-                topk_auto   = st.number_input("대표 키워드 개수 (자동모드)", min_value=3, max_value=20, value=8, step=1)
-                per_kw      = st.number_input("키워드별 문장 수", min_value=1, max_value=5, value=2, step=1)
-                seed        = st.number_input("무작위 시드", min_value=0, value=42, step=1)
-                ngram_min   = st.selectbox("최소 n그램", [1,2], index=0)
-                ngram_max   = st.selectbox("최대 n그램", [1,2,3], index=2)
-                mmr         = st.checkbox("MMR 다양성", value=True)
-                diversity   = st.slider("다양성(0~1)", 0.0, 1.0, 0.6, 0.05)
-                # 필요 시 텍스트 컬럼 바꾸기
-                text_cols   = st.multiselect("검색할 텍스트 컬럼", options=pref_cols, default=text_cols)
-        
-           # 입력 문서(규칙 기반 명사 필터는 _prep_docs 안에서 처리됨)
-            docs = _prep_docs(sub_wb, text_cols)
             
-            # 1) TF-IDF 후보 생성 (1~2그램 권장; 데이터 길면 (1,3)도 가능)
-            candidates = tfidf_keywords_for_docs(
-                docs,
-                top_n=60,
-                ngram_range=(1, 2),
-                min_df=2,
-                max_df=0.9
-            )  # [(kw, score)]
+            # (2) 문서 준비 (규칙 기반 명사 필터 적용)
+            docs_class = _prep_docs(sub_wb, text_cols)
+            docs_neg   = _prep_docs(df[df["ICT 유형"].astype(str).str.strip() != sel], text_cols)
             
-            # 2) 네거티브 대비 재랭크 (임베딩 없이 lift+z 중심)
-            df_negative = df[df["ICT 유형"].astype(str).str.strip() != sel].copy()
-            ranked = rerank_with_negative_contrast(
-                candidates=candidates,
-                df_all=df,
-                df_class=sub_wb,
-                df_negative=df_negative,
-                text_cols=text_cols,
-                w_lift=0.65,    # 임베딩 제거 → lift 가중 약간 상향
-                w_logodds=0.35
+            # (3) 대비형 TF-IDF 키워드 (KeyBERT 대체)
+            candidates = contrastive_keywords_tfidf(
+                docs_class=docs_class,
+                docs_neg=docs_neg,
+                top_n=80,                 # 넉넉히 뽑아놓고
+                ngram_bonus=(0.10, 0.20)  # 2/3그램 보너스
             )
             
-            # 3) 다양성 선택 (임베딩 없이 MMR 유사)
-            kw_selected = mmr_select_text([(kw, sc) for kw, sc, *_ in ranked], k=int(topk_auto), lambda_div=0.65)
+            # (4) 다양성 선택(MMR, 임베딩 없이)
+            kw_selected = mmr_select_text(candidates, k=int(topk_auto), lambda_div=float(diversity))
+            
+            # (5) 문장 샘플링/표시 (기존 로직 재사용)
+            if not kw_selected:
+                st.info("선택된 키워드가 없습니다.")
+            else:
+                st.markdown("<style>.ksp-quote{background:var(--card);border:1px solid var(--border);padding:10px;border-radius:10px;margin:6px 0}</style>", unsafe_allow_html=True)
+                cols = st.columns(2, gap="large") if len(kw_selected) >= 6 else [st.container()]
+                for i, kw in enumerate(kw_selected):
+                    target_col = cols[i % len(cols)]
+                    with target_col:
+                        st.markdown(f"**🔎 {kw}**")
+                        sents = sample_sentences_for_keyword(sub_wb, kw, text_cols, per_kw=int(per_kw), seed=int(seed))
+                        if not sents:
+                            st.caption("· 일치 문장을 찾지 못했습니다.")
+                        else:
+                            for fn, html_sent in sents:
+                                meta = f"<div style='font-size:12px;color:#6b7280'>{fn}</div>" if fn else ""
+                                st.markdown(f"<div class='ksp-quote'>{html_sent}{meta}</div>", unsafe_allow_html=True)
+            
 
 
 
@@ -2668,6 +2665,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
