@@ -659,7 +659,7 @@ GENERIC_KO = {
     "코드", "인적자원", "강조함", "제시함", "재활용", "요약됨", "시스템적", "슬로바키아", "재설계", "중복", "순환", "포함됨", "물류", "이루어지고", "진행", "진료", "도입하기", "통신", "원격", "빠르게", "도출합니다", "토지", "비현금", "농업", "방송", "축산물", "경매", "경영", "진료비", "원산지", "공기업",
     "관광", "교사", "주파수", "경보", "만성질환", "요르단", "재해복구", "Konza", "홍수", "가뭄", "식량", "JONEPS", "증명", "비기술적", "미디어", "전자회계감사", "수자원", "KLIS", "누락", "건설기술", "의료진", "공공의료", "설계하였습니다", "현금영수증", "공공재산", "처분", "이중화", "아날로그",
     "국세청", "자문", "시민들", "문서", "세르비아", "가입", "창출", "기업들", "crm", "육성", "장애", "인재", "협업", "기초", "업그레이드", "백업", "기관별", "유역", "의료", "환자", "안보", "지속가능성", "콘텐츠", "넘어", "증진", "공정한", "불평등", "피해", "칠레", "극복하기", "회계", "일부", "향후", "제공한다", "재정관리",
-    "지원한다", "부가가치", "생산", "국가를", "분석합니다", "요인", "중점", "부족", "공공부문", "공공조달", "강화하", "오프라인", "탈세", "증대"
+    "지원한다", "부가가치", "생산", "국가를", "분석합니다", "요인", "중점", "부족", "공공부문", "공공조달", "강화하", "오프라인", "탈세", "증대", "타지키스탄", "단지", "리투아니아", "말레이시아", "대응책", "탄자니아", "db", ""
 }
 GENERIC_EN = {
     "data","digital","service","services","system","systems","platform","portal","project","program","policy","policies",
@@ -694,9 +694,6 @@ def _is_valid_kw(t: str) -> bool:
     return (t.lower() not in STRONG_STOP)
 
 
-from collections import Counter
-import numpy as np
-
 def contrastive_keywords_tfidf(
     docs_class: list[str],
     docs_neg: list[str],
@@ -709,6 +706,7 @@ def contrastive_keywords_tfidf(
             + n-그램 보너스
     - 불용어(STOP_ALL) 적용
     - KeyBERT/임베딩 없이 '클래스 vs 나머지' 대비로 구분력 확보
+    - 영어 키워드는 최종 출력 시 대문자로 변환
     """
     def _tokenize_for_vocab(docs):
         out = []
@@ -753,6 +751,12 @@ def contrastive_keywords_tfidf(
         elif n >= 3: score += ngram_bonus[1]
         picked.append((t, float(score)))
 
+    # === ▼ 영문 단어는 대문자화 ▼ ===
+    def _upper_if_english(term: str) -> str:
+        if re.fullmatch(r"[a-zA-Z0-9\-\_]+", term):  # 영문/숫자/하이픈 조합이면
+            return term.upper()
+        return term
+
     picked.sort(key=lambda x: x[1], reverse=True)
     uniq, seen = [], []
     for term, sc in picked:
@@ -760,10 +764,11 @@ def contrastive_keywords_tfidf(
         if any(low in s or s in low for s in seen):
             continue
         seen.append(low)
-        uniq.append((term, sc))
+        uniq.append((_upper_if_english(term), sc))   # ← 여기에 적용
         if len(uniq) >= top_n:
             break
     return uniq
+
 
 
 
@@ -1824,10 +1829,7 @@ elif mode == "ICT 유형 단일클래스":
         with tab_extract:
             st.markdown("#### 대표 키워드 문장 발췌 (임베딩 기반 · TF-IDF)")
 
-            if st.sidebar.button("옵션 초기화", use_container_width=True):
-                for key in ["topk_auto", "diversity", "per_kw", "seed", "ngram_min", "ngram_max", "mmr"]:
-                    st.session_state.pop(key, None)
-                st.rerun()  # 또는 st.experimental_rerun()
+            
             
                     
             # (1) 텍스트 컬럼 자동 선택 (full_text > 주요 내용 > 요약)
@@ -2656,6 +2658,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
