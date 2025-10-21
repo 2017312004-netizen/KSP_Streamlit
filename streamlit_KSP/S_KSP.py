@@ -2472,7 +2472,7 @@ else:
 
 # ===================== 키워드 트렌드 — 완전 수동(검색 없음) =====================
 st.markdown("---")
-st.subheader("키워드 트렌드 — 직접 선택 (검색 없음 · 국가/AI 키워드 제외)")
+st.subheader("키워드 트렌드 — 직접 선택")
 # 사이드바 어딘가에:
 if st.sidebar.button("캐시 초기화", use_container_width=True):
     # 캐시 비우기
@@ -2657,6 +2657,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
