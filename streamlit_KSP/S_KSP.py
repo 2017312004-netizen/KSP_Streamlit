@@ -30,6 +30,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from matplotlib import font_manager, rcParams
 import math
+from sklearn.feature_extraction.text import TfidfVectorizer
 from functools import lru_cache     
 
 
@@ -584,20 +585,6 @@ def sample_sentences_for_keyword(df_in: pd.DataFrame, kw: str, text_cols: list[s
 
 
 
-# ================= KeyBERT 준비/키워드 추출 유틸 =================
-@st.cache_resource(show_spinner=False)
-def get_keybert(model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
-    """
-    - 한국어/영문 모두 안정적인 멀티링구얼 경량 모델.
-    - 최초 1회 다운로드 후 캐시됨.
-    """
-    try:
-        from keybert import KeyBERT
-        from sentence_transformers import SentenceTransformer
-        emb = SentenceTransformer(model_name)
-        return KeyBERT(model=emb)
-    except Exception as e:
-        return None  # 환경 제한 시 폴백 사용
 
 USE_NOUN_FILTER: bool = True   # ← 명사 필터 사용 여부(사이드바 토글로 바꿔도 됨)
 
@@ -722,105 +709,96 @@ def _is_valid_kw(t: str) -> bool:
     return (t.lower() not in STRONG_STOP)
 
 
-def keybert_keywords_for_docs(
+def tfidf_keywords_for_docs(
     docs: list[str],
-    top_n: int = 10,
-    ngram_range=(1, 3),
-    mmr: bool = True,
-    diversity: float = 0.6,
+    top_n: int = 30,
+    ngram_range=(1, 2),
+    min_df=2,
+    max_df=0.9,
+) -> list[tuple[str, float]]:
+    """
+    문서군 평균 TF-IDF 점수로 상위 n-그램 키워드 산출.
+    반환: [(term, score)] 내림차순.
+    """
+    if not docs:
+        return []
+
+    def _clean(s):
+        s = re.sub(r"\s+", " ", str(s) if s is not None else "").strip()
+        return s
+
+    docs = [_clean(d) for d in docs if isinstance(d, str) and d.strip()]
+    if not docs:
+        return []
+
+    vec = TfidfVectorizer(
+        analyzer="word",
+        ngram_range=ngram_range,
+        min_df=min_df,
+        max_df=max_df,
+        token_pattern=r"(?u)\b\w+\b"
+    )
+    X = vec.fit_transform(docs)              # (n_docs, n_terms)
+    terms = np.array(vec.get_feature_names_out())
+    scores = np.asarray(X.mean(axis=0)).ravel()
+
+    # 전역 불용어 제거(이미 상단 STRONG_STOP 구성이 있음)
+    mask = np.array([t.lower() not in STRONG_STOP for t in terms], dtype=bool)
+    terms, scores = terms[mask], scores[mask]
+
+    # 상위 후보 선별 + 근접중복(부분문자열) 제거
+    order = np.argsort(-scores)
+    picked = []
+    seen = []
+    for i in order:
+        term = terms[i]
+        sc = float(scores[i])
+        low = term.lower()
+        if any(low in s or s in low for s in seen):
+            continue
+        seen.append(low)
+        picked.append((term, sc))
+        if len(picked) >= top_n * 2:
+            break
+    return picked[:top_n]
+
+
+def mmr_select_text(
+    candidates: list[tuple[str, float]],
+    k: int,
+    lambda_div: float = 0.65,
 ) -> list[str]:
     """
-    docs: 텍스트 리스트(해당 ICT 유형의 요약/본문/풀텍스트 등)
-    top_n: 최종 키워드 개수
-    ngram_range: 1~3그램 조합
-    mmr/diversity: 다양성 조절
+    임베딩 없이 텍스트 유사도(자카드)로 MMR 유사 다양성 선택.
+    candidates: [(term, relevance_score)]
     """
-    kb = get_keybert()
-    if not kb or not docs:
-        # 폴백: 빈도 기반
-        tok = []
-        for d in docs:
-            for w in re.split(r"[^0-9A-Za-z가-힣]+", d or ""):
-                w = _normalize_token(w)
-                if _is_valid_kw(w):
-                    tok.append(w)
-        from collections import Counter
-        return [k for k, _ in Counter(tok).most_common(top_n)]
+    if not candidates:
+        return []
+    # relevance 기준으로 정렬
+    candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
+    toks = {t: set(t.lower().split()) for t, _ in candidates}
 
-    text = "\n".join(docs)
-    kw = kb.extract_keywords(
-        text,
-        keyphrase_ngram_range=ngram_range,
-        use_mmr=mmr,
-        diversity=diversity,
-        stop_words=None,  # 한/영 혼합 → 우리가 직접 필터
-        top_n=max(top_n * 3, 30),  # 넉넉히 뽑아 2차 정제
-    )
-    # kw: [(key, score), ...]
-    cleaned = []
-    seen = set()
-    for k, score in kw:
-        k2 = _normalize_token(k)
-        if not _is_valid_kw(k2):
-            continue
-        k2 = k2[:60]
-        low = k2.lower()
-        if low in seen:
-            continue
-        seen.add(low)
-        cleaned.append((k2, float(score)))
-        if len(cleaned) >= top_n * 2:
-            break
+    def sim(a: str, b: str) -> float:
+        A, B = toks[a], toks[b]
+        if not A or not B:
+            return 0.0
+        inter = len(A & B)
+        union = len(A | B)
+        return inter / union if union else 0.0
 
-    # 스코어 순 + 길이 가산(과한 단어는 억제)
-    cleaned.sort(key=lambda x: (x[1], min(len(x[0]), 20) / 20.0), reverse=True)
-    out = [k for k, _ in cleaned[:top_n]]
-    return out
-    
-def keybert_candidates_for_docs(
-    docs: List[str],
-    top_n: int = 30,
-    ngram_range=(1, 3),
-    mmr: bool = True,
-    diversity: float = 0.6,
-    per_doc_topk: int = 5,
-) -> List[Tuple[str, float]]:
-    """
-    여러 문서에서 KeyBERT 후보를 뽑은 뒤,
-    전체 ICT 내에서 빈도+평균 점수 기반으로 병합.
-    """
-    kb = get_keybert()
-    if not kb or not docs:
-        from collections import Counter
-        tok = []
-        for d in docs:
-            for w in re.split(r"[^0-9A-Za-z가-힣]+", d or ""):
-                w = _normalize_token(w)
-                if _is_valid_kw(w): tok.append(w)
-        return [(k, float(c)) for k, c in Counter(tok).most_common(top_n)]
-
-    from collections import defaultdict
-    freq = defaultdict(float)
-    count = defaultdict(int)
-    for d in docs:
-        kw = kb.extract_keywords(
-            d,
-            keyphrase_ngram_range=ngram_range,
-            use_mmr=mmr,
-            diversity=diversity,
-            stop_words=None,
-            top_n=per_doc_topk,
-        )
-        for k, s in kw:
-            k2 = _normalize_token(k)
-            if not _is_valid_kw(k2): continue
-            freq[k2] += s
-            count[k2] += 1
-
-    # 평균 점수 × 출현빈도
-    merged = [(k, (freq[k]/max(1,count[k])) * (1 + math.log1p(count[k])) ) for k in freq]
-    merged.sort(key=lambda x: x[1], reverse=True)
-    return merged[:top_n]
+    selected = [candidates[0][0]]
+    cand_terms = [t for t, _ in candidates[1:]]
+    while len(selected) < min(k, len(candidates)) and cand_terms:
+        best, best_score = None, -1e9
+        for t in cand_terms:
+            rel = next(s for (tt, s) in candidates if tt == t)
+            max_sim = max(sim(t, s) for s in selected) if selected else 0.0
+            mmr = (1 - lambda_div) * rel - lambda_div * max_sim
+            if mmr > best_score:
+                best, best_score = t, mmr
+        selected.append(best)
+        cand_terms.remove(best)
+    return selected[:k]
 
 
 def _docs_texts(df_in: pd.DataFrame, text_cols: List[str]) -> List[str]:
@@ -836,13 +814,7 @@ def _docs_texts(df_in: pd.DataFrame, text_cols: List[str]) -> List[str]:
 
 
 
-@st.cache_resource(show_spinner=False)
-def get_sbert(model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
-    try:
-        from sentence_transformers import SentenceTransformer
-        return SentenceTransformer(model_name)
-    except Exception:
-        return None
+
 
 
 
@@ -885,70 +857,50 @@ def _cos(a, b):
 
 
 def rerank_with_negative_contrast(
-    candidates: list[tuple[str, float]],   # (kw, keybert_score)
+    candidates: list[tuple[str, float]],  # (kw, tfidf_score)
     df_all: pd.DataFrame,
-    df_class: pd.DataFrame,   # 선택 ICT
-    df_negative: pd.DataFrame,# 다른 ICT 전부
+    df_class: pd.DataFrame,
+    df_negative: pd.DataFrame,
     text_cols: list[str],
-    w_lift=0.55, w_logodds=0.30, w_embed=0.15,
-    unigram_penalty=0.25, bigram_bonus=0.10, trigram_bonus=0.15
+    w_lift=0.65,
+    w_logodds=0.35,
+    # w_embed 제거
+    unigram_penalty=0.25,
+    bigram_bonus=0.10,
+    trigram_bonus=0.15
 ) -> list[tuple[str, float, float, float, float, float]]:
     """
-    반환: [(kw, final, lift, logodds_z, embedΔ, keybert)]
+    반환: [(kw, final, lift, logodds_z, emb_delta(=0), kb_like_score)]
+    여기서 kb_like_score는 TF-IDF score를 대입.
     """
     docs_cls = _prep_docs(df_class, text_cols)
     docs_neg = _prep_docs(df_negative, text_cols)
-    c_cls = _centroid(docs_cls); c_neg = _centroid(docs_neg)
 
     out = []
-    for kw, kb in candidates:
+    for kw, tfidf_sc in candidates:
         if not _is_valid_kw(kw):
             continue
-        # 문서 비중(해당 ICT vs 다른 ICT)
+
+        # 문서 내 포함 비율 (클래스/나머지)
         hit_c, n_c, share_c = _doc_share(docs_cls, kw)
         hit_n, n_n, share_n = _doc_share(docs_neg, kw)
-        lift = (share_c + 1e-6) / (share_n + 1e-6)  # ← 진짜 '구분력'
-
-        # log-odds z (ICT 편향)
+        lift = (share_c + 1e-6) / (share_n + 1e-6)
         z = _monroe_log_odds_z(hit_c, n_c, hit_n, n_n, alpha=0.5)
 
-        # 임베딩 대비(클래스 중심에 더 가깝고, negative 에서 멀수록 +
-        e_kw = _embed_phrase(kw)
-        emb_delta = (_cos(e_kw, c_cls) - _cos(e_kw, c_neg))
-
-        # n그램 가중
         ngram = len(kw.split())
         gram_bonus = (trigram_bonus if ngram >= 3 else bigram_bonus if ngram == 2 else -unigram_penalty)
 
-        # 최종 점수(로그-리프트 안정화)
-        import numpy as _np
-        final = w_lift * float(_np.log(max(lift, 1e-6))) + w_logodds * z + w_embed * emb_delta + gram_bonus + 0.03*kb
+        # 임베딩 항은 0으로
+        emb_delta = 0.0
+        final = w_lift * float(np.log(max(lift, 1e-6))) + w_logodds * z + gram_bonus + 0.03 * tfidf_sc
 
-        out.append((kw, final, lift, z, emb_delta, kb))
+        out.append((kw, final, lift, z, emb_delta, tfidf_sc))
 
     out.sort(key=lambda x: x[1], reverse=True)
     return out
 
-# MMR 다양성 선택(임베딩으로 비슷한 후보 덜어내기)
-def mmr_select(keywords: list[str], k: int, lambda_div=0.65):
-    m = get_sbert()
-    if m is None or len(keywords) <= k:
-        return keywords[:k]
-    import numpy as _np
-    embs = m.encode(keywords, normalize_embeddings=True)
-    selected = [0]  # 최고점부터 시작
-    candidates = list(range(1, len(keywords)))
-    while len(selected) < min(k, len(keywords)) and candidates:
-        sim_to_sel = []
-        for idx in candidates:
-            sim = max(_np.dot(embs[idx], embs[j]) for j in selected)
-            sim_to_sel.append((idx, sim))
-        # MMR: 새 점수 = (1-λ)*Relevance - λ*Similarity
-        # 여기서는 relevance 순서는 이미 반영되어 있으니 similarity만 최소화
-        next_idx = min(sim_to_sel, key=lambda x: lambda_div * x[1])[0]
-        selected.append(next_idx)
-        candidates.remove(next_idx)
-    return [keywords[i] for i in selected[:k]]
+
+
 
 
 # ========================= 국가 브리프(요약) 입력 =========================
@@ -1902,19 +1854,19 @@ elif mode == "ICT 유형 단일클래스":
                 # 필요 시 텍스트 컬럼 바꾸기
                 text_cols   = st.multiselect("검색할 텍스트 컬럼", options=pref_cols, default=text_cols)
         
-           # 입력 문서
-            docs = _docs_texts(sub_wb, text_cols)
+           # 입력 문서(규칙 기반 명사 필터는 _prep_docs 안에서 처리됨)
+            docs = _prep_docs(sub_wb, text_cols)
             
-            
-            # 🔹 문서 단위 후보 + 병합 기반 KeyBERT
-            candidates = keybert_candidates_for_docs(
+            # 1) TF-IDF 후보 생성 (1~2그램 권장; 데이터 길면 (1,3)도 가능)
+            candidates = tfidf_keywords_for_docs(
                 docs,
-                top_n=60,                # 조금 넉넉히
-                ngram_range=(2, 3),      # 2~3그램 우대
-                per_doc_topk=5,
-            )
+                top_n=60,
+                ngram_range=(1, 2),
+                min_df=2,
+                max_df=0.9
+            )  # [(kw, score)]
             
-            # 🔹 negative 대비형 재랭크
+            # 2) 네거티브 대비 재랭크 (임베딩 없이 lift+z 중심)
             df_negative = df[df["ICT 유형"].astype(str).str.strip() != sel].copy()
             ranked = rerank_with_negative_contrast(
                 candidates=candidates,
@@ -1922,12 +1874,12 @@ elif mode == "ICT 유형 단일클래스":
                 df_class=sub_wb,
                 df_negative=df_negative,
                 text_cols=text_cols,
-                w_lift=0.6, w_logodds=0.25, w_embed=0.15,
-                unigram_penalty=0.35, bigram_bonus=0.15, trigram_bonus=0.25,
+                w_lift=0.65,    # 임베딩 제거 → lift 가중 약간 상향
+                w_logodds=0.35
             )
             
-            # 🔹 MMR 다양성 선택
-            kw_selected = mmr_select([kw for kw, *_ in ranked], k=int(topk_auto), lambda_div=0.70)
+            # 3) 다양성 선택 (임베딩 없이 MMR 유사)
+            kw_selected = mmr_select_text([(kw, sc) for kw, sc, *_ in ranked], k=int(topk_auto), lambda_div=0.65)
 
 
 
@@ -2714,6 +2666,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
