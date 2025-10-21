@@ -9,3 +9,7 @@ Pillow>=10.0
 matplotlib>=3.8
 openpyxl>=3.1
 scikit-learn>=1.4
+
+# NLP & Keyword
+keybert>=0.8.5
+sentence-transformers>=3.0.1
