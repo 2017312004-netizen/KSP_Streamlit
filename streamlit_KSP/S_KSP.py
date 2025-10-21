@@ -586,7 +586,7 @@ def sample_sentences_for_keyword(df_in: pd.DataFrame, kw: str, text_cols: list[s
 
 # ================= KeyBERT 준비/키워드 추출 유틸 =================
 @st.cache_resource(show_spinner=False)
-def get_keybert(model_name: str = "intfloat/multilingual-e5-large"):
+def get_keybert(model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
     """
     - 한국어/영문 모두 안정적인 멀티링구얼 경량 모델.
     - 최초 1회 다운로드 후 캐시됨.
@@ -837,7 +837,7 @@ def _docs_texts(df_in: pd.DataFrame, text_cols: List[str]) -> List[str]:
 
 
 @st.cache_resource(show_spinner=False)
-def get_sbert(model_name: str = "intfloat/multilingual-e5-large"):
+def get_sbert(model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
     try:
         from sentence_transformers import SentenceTransformer
         return SentenceTransformer(model_name)
@@ -2714,6 +2714,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
