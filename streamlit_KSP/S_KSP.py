@@ -686,7 +686,8 @@ GENERIC_KO = {
     "정책적", "촉진할", "성공", "루마니아", "특허", "상황입니다", "검토하여", "환경", "생태계", "온두라스", "구축하여", "거버넌스", "필리핀", "시범", "심사", "업무", "데이터베이스", "온라인", "있으며", "산학연", "전자", "사이버", "다룹니다", "감사", "교통", "담고", "조세", "예산", "강조합니다", "세수",
     "투명성", "인센티브", "법률", "기술적", "함께", "인도네시아", "세무", "조직", "높여", "방글라데시", "수집", "확보하고", "멕시코", "효율성", "제공합니다", "적합한", "국제", "컨설팅", "분석한다", "공무원", "납세자", "납세", "가능하게", "크게", "선진", "향상", "공격", "이집트", "악성", "징수",
     "코드", "인적자원", "강조함", "제시함", "재활용", "요약됨", "시스템적", "슬로바키아", "재설계", "중복", "순환", "포함됨", "물류", "이루어지고", "진행", "진료", "도입하기", "통신", "원격", "빠르게", "도출합니다", "토지", "비현금", "농업", "방송", "축산물", "경매", "경영", "진료비", "원산지", "공기업",
-    "관광", "교사", "주파수", "경보", "만성질환", "요르단", "재해복구", "Konza", "홍수", "가뭄", "식량", "JONEPS", "증명", "비기술적", "미디어", "전자회계감사", "수자원", "KLIS", "누락", "건설기술", "의료진", "공공의료", "설계하였습니다", "현금영수증", "공공재산", "처분", "이중화", "아날로그"
+    "관광", "교사", "주파수", "경보", "만성질환", "요르단", "재해복구", "Konza", "홍수", "가뭄", "식량", "JONEPS", "증명", "비기술적", "미디어", "전자회계감사", "수자원", "KLIS", "누락", "건설기술", "의료진", "공공의료", "설계하였습니다", "현금영수증", "공공재산", "처분", "이중화", "아날로그",
+    "국세청", "자문", "시민들", "문서", "세르비아", "가입", "창출", "기업들", "crm", "육성", "장애", "인재", "협업", "기초", "업그레이드", "백업", "기관별", "유역", "의료", "환자", "안보", "지속가능성", "콘텐츠", "넘어"
 }
 GENERIC_EN = {
     "data","digital","service","services","system","systems","platform","portal","project","program","policy","policies",
@@ -1832,7 +1833,7 @@ elif mode == "ICT 유형 단일클래스":
             else:
                 st.info("표시할 키워드가 부족합니다.")
         with tab_extract:
-            st.markdown("#### 대표 키워드 문장 발췌 (임베딩 기반 · KeyBERT)")
+            st.markdown("#### 대표 키워드 문장 발췌 (임베딩 기반 · TF-IDF)")
         
             # (1) 텍스트 컬럼 자동 선택 (full_text > 주요 내용 > 요약)
             pref_cols = ["full_text", "주요 내용", "요약"]
@@ -1842,7 +1843,7 @@ elif mode == "ICT 유형 단일클래스":
                 st.stop()
         
             # (2) 최소 UI — 기본은 '자동 발췌'
-            auto_mode = st.toggle("자동 발췌 (KeyBERT)", value=True, help="해당 ICT 유형을 대표하는 키워드를 임베딩 기반으로 자동 추출")
+            auto_mode = st.toggle("자동 발췌 (TF-IDF)", value=True, help="해당 ICT 유형을 대표하는 키워드를 임베딩 기반으로 자동 추출")
             with st.expander("고급 옵션", expanded=False):
                 topk_auto   = st.number_input("대표 키워드 개수 (자동모드)", min_value=3, max_value=20, value=8, step=1)
                 per_kw      = st.number_input("키워드별 문장 수", min_value=1, max_value=5, value=2, step=1)
@@ -2666,6 +2667,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
