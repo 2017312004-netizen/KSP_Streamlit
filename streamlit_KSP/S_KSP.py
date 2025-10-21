@@ -1823,7 +1823,13 @@ elif mode == "ICT 유형 단일클래스":
                 st.info("표시할 키워드가 부족합니다.")
         with tab_extract:
             st.markdown("#### 대표 키워드 문장 발췌 (임베딩 기반 · TF-IDF)")
-        
+
+            if st.sidebar.button("옵션 초기화", use_container_width=True):
+                for key in ["topk_auto", "diversity", "per_kw", "seed", "ngram_min", "ngram_max", "mmr"]:
+                    st.session_state.pop(key, None)
+                st.rerun()  # 또는 st.experimental_rerun()
+            
+                    
             # (1) 텍스트 컬럼 자동 선택 (full_text > 주요 내용 > 요약)
             # (1) 텍스트 컬럼 자동 선택
             pref_cols = ["full_text", "주요 내용", "요약"]
@@ -2665,6 +2671,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
