@@ -767,42 +767,28 @@ def contrastive_keywords_tfidf(
 
 
 
-def mmr_select_text(
-    candidates: list[tuple[str, float]],
-    k: int,
-    lambda_div: float = 0.65,
-) -> list[str]:
-    """
-    임베딩 없이 텍스트 유사도(자카드)로 MMR 유사 다양성 선택.
-    candidates: [(term, relevance_score)]
-    """
-    if not candidates:
-        return []
-    # relevance 기준으로 정렬
+def mmr_select_text(candidates: list[tuple[str, float]], k: int, lambda_div: float = 0.65) -> list[str]:
+    if not candidates: return []
     candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
     toks = {t: set(t.lower().split()) for t, _ in candidates}
-
     def sim(a: str, b: str) -> float:
         A, B = toks[a], toks[b]
-        if not A or not B:
-            return 0.0
-        inter = len(A & B)
-        union = len(A | B)
-        return inter / union if union else 0.0
-
+        if not A or not B: return 0.0
+        inter = len(A & B); union = len(A | B)
+        return inter/union if union else 0.0
     selected = [candidates[0][0]]
-    cand_terms = [t for t, _ in candidates[1:]]
-    while len(selected) < min(k, len(candidates)) and cand_terms:
+    rest = [t for t, _ in candidates[1:]]
+    while len(selected) < min(k, len(candidates)) and rest:
         best, best_score = None, -1e9
-        for t in cand_terms:
+        for t in rest:
             rel = next(s for (tt, s) in candidates if tt == t)
             max_sim = max(sim(t, s) for s in selected) if selected else 0.0
             mmr = (1 - lambda_div) * rel - lambda_div * max_sim
             if mmr > best_score:
                 best, best_score = t, mmr
-        selected.append(best)
-        cand_terms.remove(best)
+        selected.append(best); rest.remove(best)
     return selected[:k]
+
 
 
 def _docs_texts(df_in: pd.DataFrame, text_cols: List[str]) -> List[str]:
@@ -2665,6 +2651,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
