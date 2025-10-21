@@ -1842,54 +1842,51 @@ elif mode == "ICT 유형 단일클래스":
             
             # ▼ 이 줄을 "키워드 선택/렌더" 블록의 맨 위에 추가
             RUN_TAG = f"extract_once::{sel}::{','.join(text_cols)}"
-            if st.session_state.get(RUN_TAG, False):
-                st.caption("[debug] skip duplicate render for extract block")
+            
+            
+            # --- 여기부터 당신의 기존 코드 ---
+            # (2) 문서 준비
+            docs_class = _prep_docs(sub_wb, text_cols)
+            docs_neg   = _prep_docs(df[df["ICT 유형"].astype(str).str.strip() != sel], text_cols)
+        
+            # (3) 대비형 TF-IDF 키워드
+            candidates = contrastive_keywords_tfidf(
+                docs_class=docs_class,
+                docs_neg=docs_neg,
+                top_n=80,
+                ngram_bonus=(0.10, 0.20)
+            )
+        
+            # (4) 선택 수 k는 하드 클램프
+            k_req = int(st.session_state.get("topk_auto", 8))
+            k     = max(1, min(k_req, 8))
+            diversity = float(st.session_state.get("diversity", 0.65))
+            per_kw    = int(st.session_state.get("per_kw", 2))
+            seed      = int(st.session_state.get("seed", 42))
+        
+            kw_selected = mmr_select_text(candidates, k=k, lambda_div=diversity)
+            kw_selected = kw_selected[:k]  # 혹시라도 이후에 누가 더 붙이면 잘라서 보장
+            st.caption(f"[debug] k={k} / candidates={len(candidates)} / selected={len(kw_selected)}")
+        
+       
+        
+            # (5) 문장 샘플링/표시 (기존 로직 재사용)
+            if not kw_selected:
+                st.info("선택된 키워드가 없습니다.")
             else:
-                st.session_state[RUN_TAG] = True
-            
-                # --- 여기부터 당신의 기존 코드 ---
-                # (2) 문서 준비
-                docs_class = _prep_docs(sub_wb, text_cols)
-                docs_neg   = _prep_docs(df[df["ICT 유형"].astype(str).str.strip() != sel], text_cols)
-            
-                # (3) 대비형 TF-IDF 키워드
-                candidates = contrastive_keywords_tfidf(
-                    docs_class=docs_class,
-                    docs_neg=docs_neg,
-                    top_n=80,
-                    ngram_bonus=(0.10, 0.20)
-                )
-            
-                # (4) 선택 수 k는 하드 클램프
-                k_req = int(st.session_state.get("topk_auto", 8))
-                k     = max(1, min(k_req, 8))
-                diversity = float(st.session_state.get("diversity", 0.65))
-                per_kw    = int(st.session_state.get("per_kw", 2))
-                seed      = int(st.session_state.get("seed", 42))
-            
-                kw_selected = mmr_select_text(candidates, k=k, lambda_div=diversity)
-                kw_selected = kw_selected[:k]  # 혹시라도 이후에 누가 더 붙이면 잘라서 보장
-                st.caption(f"[debug] k={k} / candidates={len(candidates)} / selected={len(kw_selected)}")
-            
-           
-            
-                # (5) 문장 샘플링/표시 (기존 로직 재사용)
-                if not kw_selected:
-                    st.info("선택된 키워드가 없습니다.")
-                else:
-                    st.markdown("<style>.ksp-quote{background:var(--card);border:1px solid var(--border);padding:10px;border-radius:10px;margin:6px 0}</style>", unsafe_allow_html=True)
-                    cols = st.columns(2, gap="large") if len(kw_selected) >= 6 else [st.container()]
-                    for i, kw in enumerate(kw_selected):
-                        target_col = cols[i % len(cols)]
-                        with target_col:
-                            st.markdown(f"**🔎 {kw}**")
-                            sents = sample_sentences_for_keyword(sub_wb, kw, text_cols, per_kw=int(per_kw), seed=int(seed))
-                            if not sents:
-                                st.caption("· 일치 문장을 찾지 못했습니다.")
-                            else:
-                                for fn, html_sent in sents:
-                                    meta = f"<div style='font-size:12px;color:#6b7280'>{fn}</div>" if fn else ""
-                                    st.markdown(f"<div class='ksp-quote'>{html_sent}{meta}</div>", unsafe_allow_html=True)
+                st.markdown("<style>.ksp-quote{background:var(--card);border:1px solid var(--border);padding:10px;border-radius:10px;margin:6px 0}</style>", unsafe_allow_html=True)
+                cols = st.columns(2, gap="large") if len(kw_selected) >= 6 else [st.container()]
+                for i, kw in enumerate(kw_selected):
+                    target_col = cols[i % len(cols)]
+                    with target_col:
+                        st.markdown(f"**🔎 {kw}**")
+                        sents = sample_sentences_for_keyword(sub_wb, kw, text_cols, per_kw=int(per_kw), seed=int(seed))
+                        if not sents:
+                            st.caption("· 일치 문장을 찾지 못했습니다.")
+                        else:
+                            for fn, html_sent in sents:
+                                meta = f"<div style='font-size:12px;color:#6b7280'>{fn}</div>" if fn else ""
+                                st.markdown(f"<div class='ksp-quote'>{html_sent}{meta}</div>", unsafe_allow_html=True)
             
 
 
@@ -2658,6 +2655,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
