@@ -1850,18 +1850,8 @@ elif mode == "ICT 유형 단일클래스":
                 ngram_bonus=(0.10, 0.20)  # 2/3그램 보너스
             )
 
-            with st.expander("고급 옵션", expanded=False):
-                st.number_input("대표 키워드 개수 (자동모드)", 3, 20, 8, 1, key="topk_auto")
-                st.slider("다양성(0~1)", 0.0, 1.0, 0.65, 0.05, key="diversity")
-                st.number_input("키워드별 문장 수", 1, 5, 2, 1, key="per_kw")
-                st.number_input("무작위 시드", 0, 10_000, 42, 1, key="seed")
-            
-            # 사용 시점
-            k         = int(st.session_state["topk_auto"])
-            diversity = float(st.session_state["diversity"])
-            per_kw    = int(st.session_state["per_kw"])
-            seed      = int(st.session_state["seed"])
-            kw_selected = mmr_select_text(candidates, k=k, lambda_div=diversity)
+            kw_selected = mmr_select_text(candidates, k=8, lambda_div=float(st.session_state.get("diversity", 0.65)))
+
 
 
             
@@ -2671,6 +2661,7 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 with st.expander("설치 / 실행"):
     st.code("pip install streamlit folium streamlit-folium pandas wordcloud plotly matplotlib", language="bash")
     st.code("streamlit run S_KSP_clickpro_v4_plotly_patch_FIXED.py", language="bash")
+
 
 
 
